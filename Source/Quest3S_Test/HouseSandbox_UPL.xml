@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root xmlns:android="http://schemas.android.com/apk/res/android">
+  <androidManifestUpdates>
+    <addPermission android:name="android.permission.INTERNET"/>
+    <addAttribute tag="application" name="android:usesCleartextTraffic" value="true"/>
+  </androidManifestUpdates>
+  <gameActivityClassAdditions>
+    <insert><![CDATA[
+    public void AndroidThunkJava_OpenHousePicker() {
+        runOnUiThread(() -> {
+            android.content.Intent pick = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT);
+            pick.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+            pick.setType("*/*");
+            startActivityForResult(pick, 43127);
+        });
+    }
+    ]]></insert>
+  </gameActivityClassAdditions>
+  <gameActivityOnActivityResultAdditions>
+    <insert><![CDATA[
+    if (requestCode == 43127 && resultCode == android.app.Activity.RESULT_OK && data != null && data.getData() != null) {
+        try {
+            android.net.Uri uri = data.getData();
+            String name = "imported.glb";
+            try (android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) {
+                    int col = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                    if (col >= 0) name = cursor.getString(col);
+                }
+            }
+            if (name != null && name.toLowerCase(java.util.Locale.ROOT).endsWith(".glb")) {
+                name = name.replaceAll("[^a-zA-Z0-9._-]", "_");
+                if (name.length() > 120) name = name.substring(name.length() - 120);
+                java.io.File folder = new java.io.File(getExternalFilesDir(null), "Houses");
+                folder.mkdirs();
+                java.io.File target = new java.io.File(folder, name);
+                java.io.File temporary = new java.io.File(folder, name + ".tmp");
+                long total = 0;
+                try (java.io.InputStream input = getContentResolver().openInputStream(uri);
+                     java.io.OutputStream output = new java.io.FileOutputStream(temporary)) {
+                    byte[] buffer = new byte[65536];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) {
+                        total += count;
+                        if (total > 100L * 1024L * 1024L) throw new java.io.IOException("GLB too large");
+                        output.write(buffer, 0, count);
+                    }
+                } catch (Exception error) {
+                    temporary.delete();
+                    throw error;
+                }
+                try (java.io.RandomAccessFile check = new java.io.RandomAccessFile(temporary, "r")) {
+                    if (total < 20 || check.read() != 'g' || check.read() != 'l' || check.read() != 'T' || check.read() != 'F') {
+                        temporary.delete();
+                        throw new java.io.IOException("Invalid GLB");
+                    }
+                }
+                if (!temporary.renameTo(target)) throw new java.io.IOException("Cannot save GLB");
+                android.util.Log.i("HouseSandbox", "Imported " + target.getName());
+            }
+        } catch (Exception error) {
+            android.util.Log.e("HouseSandbox", "File picker import failed", error);
+        }
+    }
+    ]]></insert>
+  </gameActivityOnActivityResultAdditions>
+</root>

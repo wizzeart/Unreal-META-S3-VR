@@ -43,4 +43,4 @@ La instrucción vigente para este trabajo es **no cocinar shaders nuevos**. Los 
 - [Trabajo en equipo](docs/colaboracion.md)
 - [Despliegue](deploy/README.md)
 
-No hay remoto Git configurado. Los commits son locales hasta que el propietario cree y conecte el nuevo repositorio remoto. Revisa los permisos de los modelos externos antes de publicar un repositorio público.
+El remoto `origin` apunta a [Unreal-META-S3-VR](https://github.com/wizzeart/Unreal-META-S3-VR). Revisa los permisos de los modelos externos antes de publicar un repositorio público.

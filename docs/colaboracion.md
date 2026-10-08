@@ -2,7 +2,7 @@
 
 ## Repositorio
 
-La rama inicial es `main`. Los commits del historial inicial separan la base Unreal, el hub y modelos, la documentación y la automatización. No hay remoto configurado: los cambios permanecen locales hasta conectar un repositorio nuevo.
+La rama principal es `main` y el remoto `origin` apunta a [Unreal-META-S3-VR](https://github.com/wizzeart/Unreal-META-S3-VR). Los commits del historial inicial separan la base Unreal, el hub y modelos, la documentación y la automatización.
 
 Los `.uasset`, `.umap`, `.glb`, el ejecutable grande del contenido y el release usan Git LFS. Después de clonar ejecuta `git lfs pull`. No sustituyas archivos LFS por punteros de texto en despliegues. `Saved/`, `Intermediate/`, `Binaries/`, `DerivedDataCache/`, `Tools/MaterialLab/` y logs de deploy siguen en el disco local, fuera de Git.
 

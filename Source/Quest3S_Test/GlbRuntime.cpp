@@ -26,6 +26,11 @@ int32 Number(const TSharedPtr<FJsonObject>& O, const TCHAR* Key, int32 Default =
     double Value;
     return O.IsValid() && O->TryGetNumberField(Key, Value) ? static_cast<int32>(Value) : Default;
 }
+float Scalar(const TSharedPtr<FJsonObject>& O, const TCHAR* Key, float Default)
+{
+    double Value;
+    return O.IsValid() && O->TryGetNumberField(Key, Value) ? static_cast<float>(Value) : Default;
+}
 FString String(const TSharedPtr<FJsonObject>& O, const TCHAR* Key)
 {
     FString Value;
@@ -62,7 +67,9 @@ FVector JsonVec3(const TArray<TSharedPtr<FJsonValue>>* A, const FVector& Default
 }
 }
 
-bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* Mesh, FVector& Min, FVector& Max, float& FloorZ, int64& TriangleCount, FString& Error)
+bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* Mesh, FVector& Min, FVector& Max,
+    float& FloorZ, int64& TriangleCount, TArray<UMaterialInstanceDynamic*>& LitMaterials,
+    TArray<UMaterialInstanceDynamic*>& ReferenceMaterials, FHouseMaterialFeatures& Features, FString& Error)
 {
     if (Bytes.Num() < 20 || U32(Bytes.GetData()) != 0x46546c67 || U32(Bytes.GetData()+4) != 2 || U32(Bytes.GetData()+8) != static_cast<uint32>(Bytes.Num()))
     {
@@ -97,18 +104,23 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
     UMaterialInterface* OpaqueMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Opaque_OneSided.Widget3DPassThrough_Opaque_OneSided"));
     UMaterialInterface* TranslucentMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Translucent_OneSided.Widget3DPassThrough_Translucent_OneSided"));
     UMaterialInterface* MaskedMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Masked_OneSided.Widget3DPassThrough_Masked_OneSided"));
+    UMaterialInterface* LitOpaque = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/HouseMaterials/M_HouseLitOpaque.M_HouseLitOpaque"));
+    UMaterialInterface* LitMasked = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/HouseMaterials/M_HouseLitMasked.M_HouseLitMasked"));
+    UMaterialInterface* LitBlend = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/HouseMaterials/M_HouseLitBlend.M_HouseLitBlend"));
     UTexture2D* WhiteTexture = LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
+    UTexture2D* FlatNormal = LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineMaterials/DefaultNormal.DefaultNormal"));
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: materials opaque=%d translucent=%d masked=%d"),
         OpaqueMaterial != nullptr, TranslucentMaterial != nullptr, MaskedMaterial != nullptr);
-    TMap<int32, UTexture2D*> LoadedImages;
+    TMap<int64, UTexture2D*> LoadedImages;
     int64 DecodedTextureBytes = 0;
     int32 SuccessfulImageCount = 0;
     int32 AppliedMaterialCount = 0;
-    auto ImageForTexture = [&](int32 TextureIndex) -> UTexture2D*
+    auto ImageForTexture = [&](int32 TextureIndex, bool bSrgb, bool bNormal = false) -> UTexture2D*
     {
         const int32 ImageIndex = Number(ObjectAt(Textures, TextureIndex), TEXT("source"));
         if (ImageIndex < 0) return nullptr;
-        if (UTexture2D** Existing = LoadedImages.Find(ImageIndex)) return *Existing;
+        const int64 CacheKey = int64(ImageIndex) * 4 + (bSrgb ? 1 : 0) + (bNormal ? 2 : 0);
+        if (UTexture2D** Existing = LoadedImages.Find(CacheKey)) return *Existing;
         UTexture2D* Result = nullptr;
         const auto Image = ObjectAt(Images, ImageIndex);
         const auto BufferView = ObjectAt(Views, Number(Image, TEXT("bufferView")));
@@ -150,7 +162,8 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                                 FMemory::Memcpy(Target + (int64(Y) * Width + X) * 4, Source, 4);
                             }
                             Mip.BulkData.Unlock();
-                            Result->SRGB = true;
+                            Result->SRGB = bSrgb;
+                            Result->CompressionSettings = bNormal ? TC_Normalmap : (bSrgb ? TC_Default : TC_Masks);
                             Result->NeverStream = true;
                             Result->UpdateResource();
                             DecodedTextureBytes += TextureBytes;
@@ -161,8 +174,17 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                 }
             }
         }
-        LoadedImages.Add(ImageIndex, Result);
+        LoadedImages.Add(CacheKey, Result);
         return Result;
+    };
+    auto TextureAtUv0 = [&](const TSharedPtr<FJsonObject>& Info, bool bSrgb, bool bNormal = false) -> UTexture2D*
+    {
+        if (Number(Info, TEXT("texCoord"), 0) != 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("HouseSandbox: skipped texture using unsupported texCoord channel %d"), Number(Info, TEXT("texCoord")));
+            return nullptr;
+        }
+        return ImageForTexture(Number(Info, TEXT("index")), bSrgb, bNormal);
     };
     auto View = [&](int32 AccessorIndex) -> FAccessorView
     {
@@ -252,6 +274,29 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
             }
             if (!Triangles.IsEmpty())
             {
+                TArray<FVector> TangentSum;
+                TangentSum.SetNumZeroed(Vertices.Num());
+                for (int32 I = 0; I + 2 < Triangles.Num(); I += 3)
+                {
+                    const int32 A = Triangles[I], B = Triangles[I + 1], C = Triangles[I + 2];
+                    const FVector Edge1 = Vertices[B] - Vertices[A];
+                    const FVector Edge2 = Vertices[C] - Vertices[A];
+                    const FVector2D Uv1 = UV[B] - UV[A];
+                    const FVector2D Uv2 = UV[C] - UV[A];
+                    const float Denominator = Uv1.X * Uv2.Y - Uv2.X * Uv1.Y;
+                    if (FMath::Abs(Denominator) < 0.00001f) continue;
+                    const FVector Tangent = (Edge1 * Uv2.Y - Edge2 * Uv1.Y) / Denominator;
+                    TangentSum[A] += Tangent; TangentSum[B] += Tangent; TangentSum[C] += Tangent;
+                }
+                TArray<FProcMeshTangent> Tangents;
+                Tangents.Reserve(Vertices.Num() * 2);
+                for (int32 I = 0; I < Vertices.Num(); ++I)
+                {
+                    FVector Tangent = TangentSum[I] - Normals[I] * FVector::DotProduct(TangentSum[I], Normals[I]);
+                    if (!Tangent.Normalize()) Tangent = FVector::CrossProduct(Normals[I], FVector::UpVector).GetSafeNormal();
+                    if (Tangent.IsNearlyZero()) Tangent = FVector::ForwardVector;
+                    Tangents.Emplace(Tangent, false);
+                }
                 // Every source face needs a front-facing copy on each side: the
                 // Widget3D two-sided parent paints its back face solid black.
                 if (TriangleCount + 2 * Triangles.Num() / 3 <= 350000)
@@ -266,6 +311,7 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                         Vertices.Add(VertexCopy);
                         Normals.Add(NormalCopy);
                         UV.Add(UvCopy);
+                        Tangents.Emplace(Tangents[I].TangentX, true);
                     }
                     for (int32 I = 0; I < OriginalIndexCount; I += 3)
                     {
@@ -278,19 +324,33 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                     }
                 }
                 TArray<FLinearColor> Colors;
-                TArray<FProcMeshTangent> Tangents;
                 const int32 ThisSection = Section++;
                 Mesh->CreateMeshSection_LinearColor(ThisSection, Vertices, Triangles, Normals, UV, Colors, Tangents, true);
-                if (Material.IsValid() && OpaqueMaterial)
+                UMaterialInstanceDynamic* Reference = nullptr;
+                UMaterialInstanceDynamic* Lit = nullptr;
+                if (OpaqueMaterial)
                 {
                     FString AlphaMode = String(Material, TEXT("alphaMode"));
                     UMaterialInterface* ParentMaterial = AlphaMode == TEXT("BLEND") && TranslucentMaterial ? TranslucentMaterial
                         : AlphaMode == TEXT("MASK") && MaskedMaterial ? MaskedMaterial : OpaqueMaterial;
+                    UMaterialInterface* LitParent = AlphaMode == TEXT("BLEND") && LitBlend ? LitBlend
+                        : AlphaMode == TEXT("MASK") && LitMasked ? LitMasked : LitOpaque;
                     UTexture2D* BaseColor = WhiteTexture;
+                    UTexture2D* MetalRough = WhiteTexture;
+                    UTexture2D* NormalTexture = FlatNormal;
+                    UTexture2D* Occlusion = WhiteTexture;
+                    UTexture2D* Emissive = WhiteTexture;
                     FLinearColor Tint = FLinearColor::White;
+                    FLinearColor EmissiveFactor = FLinearColor::Black;
+                    float RoughnessFactor = 1.f;
+                    float MetallicFactor = 1.f;
+                    float OcclusionStrength = 1.f;
+                    float NormalScale = 1.f;
                     const TSharedPtr<FJsonObject>* PbrPtr = nullptr;
-                    if (Material->TryGetObjectField(TEXT("pbrMetallicRoughness"), PbrPtr))
+                    if (Material.IsValid() && Material->TryGetObjectField(TEXT("pbrMetallicRoughness"), PbrPtr))
                     {
+                        RoughnessFactor = Scalar(*PbrPtr, TEXT("roughnessFactor"), 1.f);
+                        MetallicFactor = Scalar(*PbrPtr, TEXT("metallicFactor"), 1.f);
                         const TArray<TSharedPtr<FJsonValue>>* Factor = Array(*PbrPtr, TEXT("baseColorFactor"));
                         if (Factor && Factor->Num() == 4)
                         {
@@ -298,19 +358,86 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                         }
                         const TSharedPtr<FJsonObject>* BaseColorPtr = nullptr;
                         if ((*PbrPtr)->TryGetObjectField(TEXT("baseColorTexture"), BaseColorPtr))
-                            BaseColor = ImageForTexture(Number(*BaseColorPtr, TEXT("index")));
+                            BaseColor = TextureAtUv0(*BaseColorPtr, true);
+                        const TSharedPtr<FJsonObject>* MetalRoughPtr = nullptr;
+                        if ((*PbrPtr)->TryGetObjectField(TEXT("metallicRoughnessTexture"), MetalRoughPtr))
+                        {
+                            if (UTexture2D* Texture = TextureAtUv0(*MetalRoughPtr, false))
+                            {
+                                MetalRough = Texture;
+                                ++Features.MetalRoughMaps;
+                            }
+                        }
                     }
-                    if (BaseColor)
+                    const TSharedPtr<FJsonObject>* NormalPtr = nullptr;
+                    if (Material.IsValid() && Material->TryGetObjectField(TEXT("normalTexture"), NormalPtr))
                     {
-                        UMaterialInstanceDynamic* Dynamic = UMaterialInstanceDynamic::Create(ParentMaterial, Mesh);
-                        Dynamic->SetTextureParameterValue(TEXT("SlateUI"), BaseColor);
-                        Dynamic->SetVectorParameterValue(TEXT("TintColorAndOpacity"), Tint);
-                        if (AlphaMode == TEXT("BLEND") || AlphaMode == TEXT("MASK"))
-                            Dynamic->SetScalarParameterValue(TEXT("OpacityFromTexture"), 1.0f);
-                        Mesh->SetMaterial(ThisSection, Dynamic);
-                        ++AppliedMaterialCount;
+                        NormalScale = Scalar(*NormalPtr, TEXT("scale"), 1.f);
+                        if (UTexture2D* Texture = TextureAtUv0(*NormalPtr, false, true))
+                        {
+                            NormalTexture = Texture;
+                            ++Features.NormalMaps;
+                        }
                     }
+                    const TSharedPtr<FJsonObject>* OcclusionPtr = nullptr;
+                    if (Material.IsValid() && Material->TryGetObjectField(TEXT("occlusionTexture"), OcclusionPtr))
+                    {
+                        if (UTexture2D* Texture = TextureAtUv0(*OcclusionPtr, false))
+                        {
+                            Occlusion = Texture;
+                            OcclusionStrength = Scalar(*OcclusionPtr, TEXT("strength"), 1.f);
+                            ++Features.OcclusionMaps;
+                        }
+                    }
+                    const TSharedPtr<FJsonObject>* EmissivePtr = nullptr;
+                    if (Material.IsValid() && Material->TryGetObjectField(TEXT("emissiveTexture"), EmissivePtr))
+                    {
+                        if (UTexture2D* Texture = TextureAtUv0(*EmissivePtr, true))
+                        {
+                            Emissive = Texture;
+                        }
+                    }
+                    const auto* EmissiveArray = Array(Material, TEXT("emissiveFactor"));
+                    if (EmissiveArray && EmissiveArray->Num() == 3)
+                        EmissiveFactor = FLinearColor((*EmissiveArray)[0]->AsNumber(), (*EmissiveArray)[1]->AsNumber(), (*EmissiveArray)[2]->AsNumber());
+                    if (!EmissiveFactor.Equals(FLinearColor::Black))
+                        ++Features.EmissiveMaps;
+                    if (!BaseColor) BaseColor = WhiteTexture;
+                    Reference = UMaterialInstanceDynamic::Create(ParentMaterial, Mesh);
+                    if (Reference)
+                    {
+                        Reference->SetTextureParameterValue(TEXT("SlateUI"), BaseColor);
+                        Reference->SetVectorParameterValue(TEXT("TintColorAndOpacity"), Tint);
+                        if (AlphaMode == TEXT("BLEND") || AlphaMode == TEXT("MASK"))
+                            Reference->SetScalarParameterValue(TEXT("OpacityFromTexture"), 1.f);
+                    }
+                    if (LitParent)
+                    {
+                        Lit = UMaterialInstanceDynamic::Create(LitParent, Mesh);
+                        Lit->SetTextureParameterValue(TEXT("BaseColorTexture"), BaseColor);
+                        Lit->SetVectorParameterValue(TEXT("BaseColorFactor"), Tint);
+                        Lit->SetTextureParameterValue(TEXT("MetalRoughTexture"), MetalRough);
+                        Lit->SetScalarParameterValue(TEXT("RoughnessFactor"), FMath::Clamp(RoughnessFactor, 0.f, 1.f));
+                        Lit->SetScalarParameterValue(TEXT("MetallicFactor"), FMath::Clamp(MetallicFactor, 0.f, 1.f));
+                        Lit->SetTextureParameterValue(TEXT("NormalTexture"), NormalTexture);
+                        Lit->SetScalarParameterValue(TEXT("NormalStrength"), FMath::Clamp(NormalScale, 0.f, 2.f));
+                        Lit->SetTextureParameterValue(TEXT("OcclusionTexture"), Occlusion);
+                        Lit->SetScalarParameterValue(TEXT("OcclusionStrength"), FMath::Clamp(OcclusionStrength, 0.f, 1.f));
+                        Lit->SetTextureParameterValue(TEXT("EmissiveTexture"), Emissive);
+                        Lit->SetVectorParameterValue(TEXT("EmissiveFactor"), EmissiveFactor);
+                    }
+                    if (Reference || Lit) ++AppliedMaterialCount;
+                    Features.NormalScales.Add(FMath::Clamp(NormalScale, 0.f, 2.f));
+                    Features.OcclusionStrengths.Add(FMath::Clamp(OcclusionStrength, 0.f, 1.f));
                 }
+                else
+                {
+                    Features.NormalScales.Add(1.f);
+                    Features.OcclusionStrengths.Add(1.f);
+                }
+                ReferenceMaterials.Add(Reference);
+                LitMaterials.Add(Lit);
+                Mesh->SetMaterial(ThisSection, Reference ? static_cast<UMaterialInterface*>(Reference) : Lit);
                 TriangleCount += Triangles.Num()/3;
             }
         }
@@ -333,5 +460,7 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
     }
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: decoded %d/%d base images, %.1f MB; assigned %d/%d materials; floor %.1f cm"),
         SuccessfulImageCount, LoadedImages.Num(), DecodedTextureBytes / 1048576.f, AppliedMaterialCount, Section, FloorZ);
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: PBR maps normal=%d occlusion=%d metalrough=%d emissive=%d; lit materials=%d"),
+        Features.NormalMaps, Features.OcclusionMaps, Features.MetalRoughMaps, Features.EmissiveMaps, LitMaterials.Num());
     return true;
 }

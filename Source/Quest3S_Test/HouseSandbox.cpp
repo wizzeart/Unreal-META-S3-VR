@@ -12,6 +12,7 @@
 #include "Components/EditableTextBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Components/ScrollBox.h"
 #include "Components/Border.h"
 #include "Blueprint/WidgetTree.h"
@@ -28,6 +29,11 @@
 #include "Engine/LocalPlayer.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/PointLightComponent.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Engine/DirectionalLight.h"
+#include "Components/HorizontalBox.h"
+#include "Components/Spacer.h"
+#include "Serialization/JsonWriter.h"
 #include "EngineUtils.h"
 #include "Components/InputComponent.h"
 #include "InputCoreTypes.h"
@@ -104,7 +110,14 @@ void AHouseMenuInputActor::Initialize(APawn* Pawn)
         InputComponent->BindAxisKey(EKeys::OculusTouch_Left_Thumbstick_X, this, &AHouseMenuInputActor::MoveRightAxis).bConsumeInput = false;
         InputComponent->BindAxisKey(EKeys::OculusTouch_Right_Thumbstick_X, this, &AHouseMenuInputActor::TurnAxis).bConsumeInput = false;
         InputComponent->BindAxisKey(EKeys::OculusTouch_Right_Thumbstick_Y, this, &AHouseMenuInputActor::ScrollAxis).bConsumeInput = false;
-        InputComponent->BindKey(EKeys::OculusTouch_Left_X_Click, IE_Pressed, this, &AHouseMenuInputActor::ToggleMenu).bConsumeInput = false;
+        InputComponent->BindKey(EKeys::OculusTouch_Left_X_Click, IE_Pressed, this, &AHouseMenuInputActor::XDown).bConsumeInput = true;
+        InputComponent->BindKey(EKeys::OculusTouch_Left_X_Click, IE_Released, this, &AHouseMenuInputActor::XUp).bConsumeInput = true;
+        InputComponent->BindKey(EKeys::OculusTouch_Left_Y_Click, IE_Pressed, this, &AHouseMenuInputActor::YDown).bConsumeInput = true;
+        InputComponent->BindKey(EKeys::OculusTouch_Left_Y_Click, IE_Released, this, &AHouseMenuInputActor::YUp).bConsumeInput = true;
+        InputComponent->BindKey(EKeys::OculusTouch_Right_A_Click, IE_Pressed, this, &AHouseMenuInputActor::ADown).bConsumeInput = true;
+        InputComponent->BindKey(EKeys::OculusTouch_Right_A_Click, IE_Released, this, &AHouseMenuInputActor::AUp).bConsumeInput = true;
+        InputComponent->BindKey(EKeys::OculusTouch_Right_B_Click, IE_Pressed, this, &AHouseMenuInputActor::BDown).bConsumeInput = true;
+        InputComponent->BindKey(EKeys::OculusTouch_Right_B_Click, IE_Released, this, &AHouseMenuInputActor::BUp).bConsumeInput = true;
     }
 }
 
@@ -117,6 +130,19 @@ void AHouseMenuInputActor::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     if (!ControlledPawn || !PlayerCamera) return;
+    const float Now = GetWorld()->GetTimeSeconds();
+    if (bXHeld && bYHeld && !bVisualChordFired && Now - FMath::Max(XDownTime, YDownTime) >= 0.6f)
+    {
+        bVisualChordFired = true;
+        bXUsedForChord = true;
+        if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this)))
+            Sandbox->ShowPanel(Sandbox->GetActivePanel() == EHousePanel::Visual ? EHousePanel::Closed : EHousePanel::Visual);
+    }
+    if (bAHeld && bBHeld && !bReturnChordFired && Now - FMath::Max(ADownTime, BDownTime) >= 1.f)
+    {
+        bReturnChordFired = true;
+        if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this))) Sandbox->ReturnToLibrary();
+    }
     const float Step = FMath::Min(DeltaSeconds, 0.05f);
     auto DeadZone = [](float Value) { return FMath::Abs(Value) < 0.15f ? 0.f : Value; };
     if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this)))
@@ -124,7 +150,7 @@ void AHouseMenuInputActor::Tick(float DeltaSeconds)
         if (Sandbox->IsMenuVisible())
         {
             const float Scroll = DeadZone(ScrollInput);
-            if (Pointer && !FMath::IsNearlyZero(Scroll)) Pointer->ScrollWheel(-Scroll * Step * 8.f);
+            if (!FMath::IsNearlyZero(Scroll)) Sandbox->ScrollPanel(-Scroll * Step * 650.f);
             return;
         }
     }
@@ -155,7 +181,7 @@ void AHouseMenuInputActor::Tick(float DeltaSeconds)
 
 void AHouseMenuInputActor::TriggerDown()
 {
-    if (Pointer && !bTriggerHeld)
+    if (Pointer && !bTriggerHeld && !bSuppressTriggerUntilRelease)
     {
         bTriggerHeld = true;
         UE_LOG(LogTemp, Display, TEXT("HouseSandbox: right trigger down, widget hit=%d"), Pointer->GetHoveredWidgetComponent() != nullptr);
@@ -169,29 +195,52 @@ void AHouseMenuInputActor::TriggerUp()
         bTriggerHeld = false;
         Pointer->ReleasePointerKey(EKeys::LeftMouseButton);
     }
+    bSuppressTriggerUntilRelease = false;
+}
+void AHouseMenuInputActor::CancelPointerPress()
+{
+    if (Pointer && bTriggerHeld) Pointer->ReleasePointerKey(EKeys::LeftMouseButton);
+    bSuppressTriggerUntilRelease = bTriggerHeld;
+    bTriggerHeld = false;
 }
 void AHouseMenuInputActor::TriggerAxis(float Value)
 {
-    if (Value > 0.55f) TriggerDown();
+    if (Value > 0.55f && !bSuppressTriggerUntilRelease) TriggerDown();
     else if (Value < 0.25f) TriggerUp();
 }
 void AHouseMenuInputActor::ToggleMenu()
 {
     if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this)))
-        Sandbox->ToggleMenuVisibility();
+        Sandbox->ShowPanel(Sandbox->IsMenuVisible() ? EHousePanel::Closed : EHousePanel::Library);
 }
+
+void AHouseMenuInputActor::XDown() { bXHeld = true; XDownTime = GetWorld()->GetTimeSeconds(); if (bYHeld) bXUsedForChord = true; }
+void AHouseMenuInputActor::XUp()
+{
+    if (!bXUsedForChord && !bYHeld) ToggleMenu();
+    bXHeld = false;
+    bXUsedForChord = false;
+    if (!bYHeld) bVisualChordFired = false;
+}
+void AHouseMenuInputActor::YDown() { bYHeld = true; YDownTime = GetWorld()->GetTimeSeconds(); if (bXHeld) bXUsedForChord = true; }
+void AHouseMenuInputActor::YUp() { bYHeld = false; if (!bXHeld) bVisualChordFired = false; }
+void AHouseMenuInputActor::ADown() { bAHeld = true; ADownTime = GetWorld()->GetTimeSeconds(); }
+void AHouseMenuInputActor::AUp() { bAHeld = false; if (!bBHeld) bReturnChordFired = false; }
+void AHouseMenuInputActor::BDown() { bBHeld = true; BDownTime = GetWorld()->GetTimeSeconds(); }
+void AHouseMenuInputActor::BUp() { bBHeld = false; if (!bAHeld) bReturnChordFired = false; }
 
 void AHouseSandboxGameMode::BeginPlay()
 {
     Super::BeginPlay();
     IFileManager::Get().MakeDirectory(*GetModelDirectory(), true);
+    LoadVisualSettings();
     MenuActor = GetWorld()->SpawnActor<AActor>();
     MenuComponent = NewObject<UWidgetComponent>(MenuActor, TEXT("HouseLibrary"));
     MenuComponent->RegisterComponent();
     MenuActor->SetRootComponent(MenuComponent);
     MenuComponent->SetWidgetSpace(EWidgetSpace::World);
-    MenuComponent->SetDrawSize(FVector2D(700, 850));
-    MenuComponent->SetWorldScale3D(FVector(0.22));
+    MenuComponent->SetDrawSize(FVector2D(1200, 800));
+    MenuComponent->SetWorldScale3D(FVector(0.075));
     MenuComponent->SetTwoSided(true);
     MenuComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
     MenuComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -213,20 +262,28 @@ void AHouseSandboxGameMode::PlaceMenuAtPlayer()
         GetWorldTimerManager().SetTimer(Retry, this, &AHouseSandboxGameMode::PlaceMenuAtPlayer, 0.25f, false);
         return;
     }
-    MenuActor->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
-    MenuComponent->SetRelativeLocation(FVector(120, 0, 0));
-    MenuComponent->SetRelativeRotation(FRotator(0, 180, 0));
+    ShowPanel(EHousePanel::Library);
     MenuInput = GetWorld()->SpawnActor<AHouseMenuInputActor>();
     MenuInput->Initialize(Pawn);
     PreviewLight = NewObject<UPointLightComponent>(Pawn, TEXT("HousePreviewLight"));
     PreviewLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
     PreviewLight->SetIntensityUnits(ELightUnits::Lumens);
-    PreviewLight->SetIntensity(1200.f);
-    PreviewLight->SetAttenuationRadius(1800.f);
+    PreviewLight->SetIntensity(450.f);
+    PreviewLight->SetAttenuationRadius(1000.f);
     PreviewLight->SetCastShadows(false);
     PreviewLight->RegisterComponent();
     PreviewLight->SetVisibility(false);
-    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: menu attached to XR camera"));
+    SceneSun = GetWorld()->SpawnActor<ADirectionalLight>();
+    if (SceneSun)
+    {
+        SceneSun->SetActorRotation(FRotator(-55.f, 25.f, 0.f));
+        ULightComponent* Sun = SceneSun->GetLightComponent();
+        Sun->SetMobility(EComponentMobility::Movable);
+        Sun->SetIntensity(1.5f);
+        Sun->SetCastShadows(false);
+        Sun->SetVisibility(false);
+    }
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: world menu placed in front of XR camera"));
 }
 
 FString AHouseSandboxGameMode::GetModelDirectory() const
@@ -256,7 +313,138 @@ void AHouseSandboxGameMode::RefreshMenu()
 
 void AHouseSandboxGameMode::ToggleMenuVisibility()
 {
-    if (MenuComponent) MenuComponent->SetVisibility(!MenuComponent->IsVisible());
+    ShowPanel(IsMenuVisible() ? EHousePanel::Closed : EHousePanel::Library);
+}
+
+void AHouseSandboxGameMode::ShowPanel(EHousePanel Panel)
+{
+    if (Panel != ActivePanel && MenuInput) MenuInput->CancelPointerPress();
+    ActivePanel = Panel;
+    if (!MenuComponent || !MenuActor) return;
+    MenuComponent->SetVisibility(Panel != EHousePanel::Closed);
+    if (Panel == EHousePanel::Closed) return;
+    if (MenuWidget) MenuWidget->SetVisualMode(Panel == EHousePanel::Visual);
+    APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    UCameraComponent* Camera = Pawn ? Pawn->FindComponentByClass<UCameraComponent>() : nullptr;
+    if (!Camera) return;
+    const FRotator Yaw(0.f, Camera->GetComponentRotation().Yaw, 0.f);
+    MenuActor->SetActorLocation(Camera->GetComponentLocation() + Yaw.Vector() * 135.f);
+    MenuActor->SetActorRotation(FRotator(0.f, Yaw.Yaw + 180.f, 0.f));
+}
+
+void AHouseSandboxGameMode::ReturnToLibrary()
+{
+    ++RequestGeneration;
+    if (HouseActor) HouseActor->Destroy();
+    HouseActor = nullptr;
+    HouseMesh = nullptr;
+    LitMaterials.Empty();
+    ReferenceMaterials.Empty();
+    MaterialFeatures = FHouseMaterialFeatures();
+    if (PreviewLight) PreviewLight->SetVisibility(false);
+    if (SceneSun) SceneSun->GetLightComponent()->SetVisibility(false);
+    if (APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0)) Pawn->SetActorLocation(FVector::ZeroVector);
+    LastError = TEXT("Elige un modelo de la laptop o del visor");
+    RefreshMenu();
+    ShowPanel(EHousePanel::Library);
+    FetchHubModels(GetHubAddress());
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: returned to model library"));
+}
+
+void AHouseSandboxGameMode::LoadVisualSettings()
+{
+    FString Contents;
+    const FString Path = FPaths::Combine(GetModelDirectory(), TEXT("visual_settings.json"));
+    if (!FFileHelper::LoadFileToString(Contents, *Path)) return;
+    TSharedPtr<FJsonObject> Json;
+    if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Contents), Json) || !Json.IsValid()) return;
+    Json->TryGetBoolField(TEXT("lit"), VisualSettings.bLit);
+    Json->TryGetBoolField(TEXT("normal"), VisualSettings.bNormal);
+    Json->TryGetBoolField(TEXT("occlusion"), VisualSettings.bOcclusion);
+    Json->TryGetBoolField(TEXT("metalRough"), VisualSettings.bMetalRough);
+    Json->TryGetBoolField(TEXT("emissive"), VisualSettings.bEmissive);
+    Json->TryGetBoolField(TEXT("fillLight"), VisualSettings.bFillLight);
+    Json->TryGetBoolField(TEXT("shadows"), VisualSettings.bShadows);
+}
+
+void AHouseSandboxGameMode::SaveVisualSettings() const
+{
+    TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+    Json->SetBoolField(TEXT("lit"), VisualSettings.bLit);
+    Json->SetBoolField(TEXT("normal"), VisualSettings.bNormal);
+    Json->SetBoolField(TEXT("occlusion"), VisualSettings.bOcclusion);
+    Json->SetBoolField(TEXT("metalRough"), VisualSettings.bMetalRough);
+    Json->SetBoolField(TEXT("emissive"), VisualSettings.bEmissive);
+    Json->SetBoolField(TEXT("fillLight"), VisualSettings.bFillLight);
+    Json->SetBoolField(TEXT("shadows"), VisualSettings.bShadows);
+    FString Contents;
+    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Contents);
+    if (FJsonSerializer::Serialize(Json, Writer))
+        FFileHelper::SaveStringToFile(Contents, *FPaths::Combine(GetModelDirectory(), TEXT("visual_settings.json")));
+}
+
+void AHouseSandboxGameMode::ApplyVisualSettings(bool bSave)
+{
+    if (HouseMesh)
+    {
+        for (int32 Index = 0; Index < LitMaterials.Num(); ++Index)
+        {
+            UMaterialInstanceDynamic* Lit = LitMaterials[Index];
+            UMaterialInstanceDynamic* Reference = ReferenceMaterials.IsValidIndex(Index) ? ReferenceMaterials[Index].Get() : nullptr;
+            if (Lit)
+            {
+                Lit->SetScalarParameterValue(TEXT("NormalStrength"), VisualSettings.bNormal && MaterialFeatures.NormalScales.IsValidIndex(Index) ? MaterialFeatures.NormalScales[Index] : 0.f);
+                Lit->SetScalarParameterValue(TEXT("OcclusionStrength"), VisualSettings.bOcclusion && MaterialFeatures.OcclusionStrengths.IsValidIndex(Index) ? MaterialFeatures.OcclusionStrengths[Index] : 0.f);
+                Lit->SetScalarParameterValue(TEXT("MetalRoughStrength"), VisualSettings.bMetalRough ? 1.f : 0.f);
+                Lit->SetScalarParameterValue(TEXT("EmissiveStrength"), VisualSettings.bEmissive ? 1.f : 0.f);
+            }
+            HouseMesh->SetMaterial(Index, VisualSettings.bLit && Lit ? static_cast<UMaterialInterface*>(Lit) : Reference);
+        }
+    }
+    const bool bLightScene = HouseActor && VisualSettings.bLit;
+    if (PreviewLight) PreviewLight->SetVisibility(bLightScene && VisualSettings.bFillLight);
+    if (SceneSun)
+    {
+        ULightComponent* Sun = SceneSun->GetLightComponent();
+        Sun->SetCastShadows(VisualSettings.bShadows);
+        Sun->SetVisibility(bLightScene);
+    }
+    if (MenuWidget) MenuWidget->UpdateVisualLabels();
+    if (bSave) SaveVisualSettings();
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: visual lit=%d normal=%d ao=%d metalrough=%d emissive=%d fill=%d shadows=%d"),
+        VisualSettings.bLit, VisualSettings.bNormal, VisualSettings.bOcclusion, VisualSettings.bMetalRough,
+        VisualSettings.bEmissive, VisualSettings.bFillLight, VisualSettings.bShadows);
+}
+
+void AHouseSandboxGameMode::ChangeVisualControl(int32 Feature)
+{
+    switch (Feature)
+    {
+    case 0: VisualSettings.bLit = !VisualSettings.bLit; break;
+    case 1: VisualSettings.bNormal = !VisualSettings.bNormal; break;
+    case 2: VisualSettings.bOcclusion = !VisualSettings.bOcclusion; break;
+    case 3: VisualSettings.bMetalRough = !VisualSettings.bMetalRough; break;
+    case 4: VisualSettings.bEmissive = !VisualSettings.bEmissive; break;
+    case 5: VisualSettings.bFillLight = !VisualSettings.bFillLight; break;
+    case 6: VisualSettings.bShadows = !VisualSettings.bShadows; break;
+    case 100:
+        VisualSettings = FHouseVisualSettings();
+        VisualSettings.bLit = false; VisualSettings.bFillLight = false; break;
+    case 101:
+        VisualSettings = FHouseVisualSettings(); break;
+    case 102:
+        VisualSettings = FHouseVisualSettings(); VisualSettings.bShadows = true; break;
+    case 200: ReturnToLibrary(); return;
+    case 201: ShowPanel(EHousePanel::Library); return;
+    case 202: ShowPanel(EHousePanel::Closed); return;
+    default: return;
+    }
+    ApplyVisualSettings();
+}
+
+void AHouseSandboxGameMode::ScrollPanel(float Amount)
+{
+    if (MenuWidget) MenuWidget->ScrollBy(Amount);
 }
 
 bool AHouseSandboxGameMode::IsMenuVisible() const
@@ -319,9 +507,10 @@ void AHouseSandboxGameMode::FetchHubModels(const FString& HubAddress)
     Request->SetURL(Base + TEXT("/api/models"));
     Request->SetVerb(TEXT("GET"));
     Request->SetTimeout(12.f);
-    Request->OnProcessRequestComplete().BindLambda([WeakThis, Base](FHttpRequestPtr, FHttpResponsePtr Response, bool bSuccess)
+    const int32 Generation = RequestGeneration;
+    Request->OnProcessRequestComplete().BindLambda([WeakThis, Base, Generation](FHttpRequestPtr, FHttpResponsePtr Response, bool bSuccess)
     {
-        if (!WeakThis.IsValid()) return;
+        if (!WeakThis.IsValid() || WeakThis->RequestGeneration != Generation) return;
         if (!bSuccess || !Response.IsValid() || Response->GetResponseCode() != 200
             || Response->GetContent().Num() > 512 * 1024)
         {
@@ -373,13 +562,14 @@ void AHouseSandboxGameMode::DownloadHouse(const FString& Url)
         return;
     }
     SetError(TEXT("Descargando modelo..."));
+    const int32 Generation = ++RequestGeneration;
     TWeakObjectPtr<AHouseSandboxGameMode> WeakThis(this);
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(Url);
     Request->SetVerb(TEXT("GET"));
-    Request->OnProcessRequestComplete().BindLambda([WeakThis, Name](FHttpRequestPtr, FHttpResponsePtr Response, bool bSuccess)
+    Request->OnProcessRequestComplete().BindLambda([WeakThis, Name, Generation](FHttpRequestPtr, FHttpResponsePtr Response, bool bSuccess)
     {
-        if (!WeakThis.IsValid()) return;
+        if (!WeakThis.IsValid() || WeakThis->RequestGeneration != Generation) return;
         if (!bSuccess || !Response.IsValid() || Response->GetResponseCode() != 200)
         {
             WeakThis->SetError(TEXT("No se pudo descargar el archivo"));
@@ -443,7 +633,11 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
     FVector Min, Max;
     float FloorZ = 0.f;
     FString ImportError;
-    if (!HouseGlb::BuildMesh(Bytes, NewMesh, Min, Max, FloorZ, TotalTriangles, ImportError))
+    TArray<UMaterialInstanceDynamic*> NewLitMaterials;
+    TArray<UMaterialInstanceDynamic*> NewReferenceMaterials;
+    FHouseMaterialFeatures NewFeatures;
+    if (!HouseGlb::BuildMesh(Bytes, NewMesh, Min, Max, FloorZ, TotalTriangles,
+        NewLitMaterials, NewReferenceMaterials, NewFeatures, ImportError))
     {
         NewActor->Destroy();
         SetError(ImportError);
@@ -454,14 +648,19 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
     if (HouseActor) HouseActor->Destroy();
     HouseActor = NewActor;
     HouseMesh = NewMesh;
+    LitMaterials.Reset();
+    ReferenceMaterials.Reset();
+    for (UMaterialInstanceDynamic* Item : NewLitMaterials) LitMaterials.Add(Item);
+    for (UMaterialInstanceDynamic* Item : NewReferenceMaterials) ReferenceMaterials.Add(Item);
+    MaterialFeatures = NewFeatures;
     HideTemplateGeometry();
-    if (PreviewLight) PreviewLight->SetVisibility(true);
+    ApplyVisualSettings(false);
     if (APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0))
     {
         Pawn->SetActorLocation(FVector(0, 0, 0));
     }
     SetError(FString::Printf(TEXT("%s cargado: %lld triangulos"), *FileName, TotalTriangles));
-    if (MenuComponent) MenuComponent->SetVisibility(false);
+    ShowPanel(EHousePanel::Closed);
     return true;
 }
 
@@ -475,71 +674,124 @@ void UHouseRemoteButton::ActivateRemote()
     if (ParentMenu) ParentMenu->OpenRemote(ModelUrl);
 }
 
+void UHouseVisualButton::ActivateVisual()
+{
+    if (ParentMenu) ParentMenu->ActivateVisualControl(Feature);
+}
+
 bool UHouseSandboxWidget::Initialize()
 {
     if (!Super::Initialize()) return false;
     UBorder* Backdrop = WidgetTree->ConstructWidget<UBorder>();
-    Backdrop->SetBrushColor(FLinearColor(0.025f, 0.05f, 0.09f, 0.98f));
-    Backdrop->SetPadding(FMargin(22.f));
+    Backdrop->SetBrushColor(FLinearColor(0.025f, 0.055f, 0.095f, 0.98f));
+    Backdrop->SetPadding(FMargin(26.f));
     WidgetTree->RootWidget = Backdrop;
-    UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>();
-    Backdrop->SetContent(Scroll);
-    UVerticalBox* Root = WidgetTree->ConstructWidget<UVerticalBox>();
-    Scroll->AddChild(Root);
-    auto AddText = [&](const FString& Value) -> UTextBlock*
+    UVerticalBox* Frame = WidgetTree->ConstructWidget<UVerticalBox>();
+    Backdrop->SetContent(Frame);
+    auto AddText = [&](UVerticalBox* Parent, const FString& Value, int32 Size = 28) -> UTextBlock*
     {
         UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
         Text->SetText(FText::FromString(Value));
-        Root->AddChildToVerticalBox(Text);
+        FSlateFontInfo Font = Text->GetFont();
+        Font.Size = Size;
+        Text->SetFont(Font);
+        Text->SetAutoWrapText(true);
+        Parent->AddChildToVerticalBox(Text);
         return Text;
     };
-    AddText(TEXT("CASAS VR  |  BIBLIOTECA"));
-    AddText(TEXT("HUB DE LA LAPTOP  |  SUBE DESDE EL NAVEGADOR"));
+    auto AddButton = [&](UVerticalBox* Parent, const FString& Label, FName Name) -> UButton*
+    {
+        UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
+        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
+        UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
+        Text->SetText(FText::FromString(Label));
+        FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
+        Text->SetAutoWrapText(true);
+        Button->AddChild(Text);
+        if (UVerticalBoxSlot* Slot = Parent->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
+        return Button;
+    };
+    AddText(Frame, TEXT("CASAS VR    ·    BIBLIOTECA Y VISUALES"), 38);
+    UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>();
+    Frame->AddChildToVerticalBox(Tabs);
+    UButton* LibraryTab = WidgetTree->ConstructWidget<UButton>();
+    UTextBlock* LibraryTabText = WidgetTree->ConstructWidget<UTextBlock>();
+    LibraryTabText->SetText(FText::FromString(TEXT("MODELOS")));
+    LibraryTab->AddChild(LibraryTabText);
+    LibraryTab->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnShowLibrary);
+    Tabs->AddChildToHorizontalBox(LibraryTab);
+    UButton* VisualTab = WidgetTree->ConstructWidget<UButton>();
+    UTextBlock* VisualTabText = WidgetTree->ConstructWidget<UTextBlock>();
+    VisualTabText->SetText(FText::FromString(TEXT("OPCIONES VISUALES")));
+    VisualTab->AddChild(VisualTabText);
+    VisualTab->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnShowVisual);
+    Tabs->AddChildToHorizontalBox(VisualTab);
+    ContentScroll = WidgetTree->ConstructWidget<UScrollBox>();
+    if (UVerticalBoxSlot* Slot = Frame->AddChildToVerticalBox(ContentScroll))
+    {
+        FSlateChildSize Size; Size.SizeRule = ESlateSizeRule::Fill; Slot->SetSize(Size);
+    }
+    LibraryPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+    ContentScroll->AddChild(LibraryPanel);
+    VisualPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+    ContentScroll->AddChild(VisualPanel);
+    VisualPanel->SetVisibility(ESlateVisibility::Collapsed);
+    AddText(LibraryPanel, TEXT("HUB DE LA LAPTOP"), 30);
     HubBox = WidgetTree->ConstructWidget<UEditableTextBox>();
     HubBox->SetText(FText::FromString(TEXT("http://127.0.0.1:8765")));
     HubBox->SetHintText(FText::FromString(TEXT("http://IP-LAPTOP:8765")));
-    Root->AddChildToVerticalBox(HubBox);
-    UButton* Sync = WidgetTree->ConstructWidget<UButton>();
-    UTextBlock* SyncLabel = WidgetTree->ConstructWidget<UTextBlock>();
-    SyncLabel->SetText(FText::FromString(TEXT("VER MODELOS DE LA LAPTOP")));
-    Sync->AddChild(SyncLabel);
+    LibraryPanel->AddChildToVerticalBox(HubBox);
+    UButton* Sync = AddButton(LibraryPanel, TEXT("VER MODELOS DE LA LAPTOP"), TEXT("SyncHub"));
     Sync->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnSyncHub);
-    Root->AddChildToVerticalBox(Sync);
     RemoteList = WidgetTree->ConstructWidget<UVerticalBox>();
-    Root->AddChildToVerticalBox(RemoteList);
-    AddText(TEXT("ARCHIVO DEL VISOR"));
-    UButton* Pick = WidgetTree->ConstructWidget<UButton>();
-    UTextBlock* PickLabel = WidgetTree->ConstructWidget<UTextBlock>();
-    PickLabel->SetText(FText::FromString(TEXT("ABRIR ARCHIVO DEL DISPOSITIVO")));
-    Pick->AddChild(PickLabel);
+    LibraryPanel->AddChildToVerticalBox(RemoteList);
+    AddText(LibraryPanel, TEXT("ARCHIVOS DEL VISOR"), 30);
+    FileList = WidgetTree->ConstructWidget<UVerticalBox>();
+    LibraryPanel->AddChildToVerticalBox(FileList);
+    UButton* Pick = AddButton(LibraryPanel, TEXT("ABRIR ARCHIVO DEL DISPOSITIVO"), TEXT("PickLocal"));
     Pick->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnPickLocal);
-    Root->AddChildToVerticalBox(Pick);
-    UButton* Refresh = WidgetTree->ConstructWidget<UButton>();
-    UTextBlock* RefreshLabel = WidgetTree->ConstructWidget<UTextBlock>();
-    RefreshLabel->SetText(FText::FromString(TEXT("ACTUALIZAR ARCHIVOS LOCALES")));
-    Refresh->AddChild(RefreshLabel);
+    UButton* Refresh = AddButton(LibraryPanel, TEXT("ACTUALIZAR ARCHIVOS LOCALES"), TEXT("RefreshLocal"));
     Refresh->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnRefresh);
-    Root->AddChildToVerticalBox(Refresh);
-    AddText(TEXT("ENLACE DIRECTO GLB  |  OPCIONAL"));
+    AddText(LibraryPanel, TEXT("ENLACE DIRECTO GLB  ·  OPCIONAL"), 27);
     UrlBox = WidgetTree->ConstructWidget<UEditableTextBox>();
     UrlBox->SetHintText(FText::FromString(TEXT("http://IP-LAPTOP:8765/models/casa.glb")));
-    Root->AddChildToVerticalBox(UrlBox);
-    UButton* Download = WidgetTree->ConstructWidget<UButton>();
-    UTextBlock* DownloadLabel = WidgetTree->ConstructWidget<UTextBlock>();
-    DownloadLabel->SetText(FText::FromString(TEXT("DESCARGAR Y ABRIR")));
-    Download->AddChild(DownloadLabel);
+    LibraryPanel->AddChildToVerticalBox(UrlBox);
+    UButton* Download = AddButton(LibraryPanel, TEXT("DESCARGAR Y ABRIR"), TEXT("DownloadDirect"));
     Download->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnDownload);
-    Root->AddChildToVerticalBox(Download);
-    UButton* Close = WidgetTree->ConstructWidget<UButton>();
-    UTextBlock* CloseLabel = WidgetTree->ConstructWidget<UTextBlock>();
-    CloseLabel->SetText(FText::FromString(TEXT("CERRAR PANEL  |  BOTON X PARA ABRIR")));
-    Close->AddChild(CloseLabel);
+    AddText(VisualPanel, TEXT("PERFILES"), 32);
+    auto VisualButton = [&](int32 Feature, const FString& Label) -> UTextBlock*
+    {
+        UHouseVisualButton* Button = WidgetTree->ConstructWidget<UHouseVisualButton>();
+        Button->Feature = Feature;
+        Button->ParentMenu = this;
+        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
+        UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
+        Text->SetText(FText::FromString(Label));
+        FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
+        Button->AddChild(Text);
+        Button->OnClicked.AddDynamic(Button, &UHouseVisualButton::ActivateVisual);
+        if (UVerticalBoxSlot* Slot = VisualPanel->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
+        if (Feature < 100) { VisualButtons.Add(Button); VisualLabels.Add(Text); }
+        return Text;
+    };
+    VisualButton(100, TEXT("REFERENCIA  ·  COLOR ORIGINAL"));
+    VisualButton(101, TEXT("EQUILIBRADO  ·  MATERIALES Y LUZ"));
+    VisualButton(102, TEXT("DETALLE  ·  SOMBRAS EXPERIMENTALES"));
+    AddText(VisualPanel, TEXT("AJUSTES INDIVIDUALES"), 32);
+    VisualButton(0, TEXT("Materiales realistas"));
+    VisualButton(1, TEXT("Relieve de superficies"));
+    VisualButton(2, TEXT("Oclusión del modelo"));
+    VisualButton(3, TEXT("Mapa metal / rugosidad"));
+    VisualButton(4, TEXT("Emisión"));
+    VisualButton(5, TEXT("Luz de relleno"));
+    VisualButton(6, TEXT("Sombras direccionales (experimental)"));
+    VisualButton(200, TEXT("VOLVER A MODELOS Y LIBERAR CASA"));
+    VisualButton(201, TEXT("ABRIR BIBLIOTECA"));
+    UButton* Recenter = AddButton(Frame, TEXT("RECOLOCAR PANEL DELANTE DE MÍ"), TEXT("RecenterPanel"));
+    Recenter->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnRecenter);
+    UButton* Close = AddButton(Frame, TEXT("CERRAR  ·  X PARA ABRIR  ·  X+Y VISUALES  ·  A+B MODELOS"), TEXT("ClosePanel"));
     Close->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnClose);
-    Root->AddChildToVerticalBox(Close);
-    StatusText = AddText(TEXT("Listo"));
-    AddText(TEXT("CASAS GUARDADAS EN EL VISOR"));
-    FileList = WidgetTree->ConstructWidget<UVerticalBox>();
-    Root->AddChildToVerticalBox(FileList);
+    StatusText = AddText(Frame, TEXT("Listo"), 24);
     return true;
 }
 
@@ -547,6 +799,7 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
 {
     Sandbox = Owner;
     if (!FileList || !Sandbox) return;
+    const float PreviousScroll = ContentScroll ? ContentScroll->GetScrollOffset() : 0.f;
     if (HubBox && !bHubAddressLoaded)
     {
         HubBox->SetText(FText::FromString(Sandbox->GetHubAddress()));
@@ -561,10 +814,57 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
         Button->ParentMenu = this;
         UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
         Label->SetText(FText::FromString(File));
+        FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
+        Label->SetAutoWrapText(true);
+        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseFileButton::ActivateFile);
-        FileList->AddChildToVerticalBox(Button);
+        if (UVerticalBoxSlot* Slot = FileList->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
     }
+    if (ContentScroll) ContentScroll->SetScrollOffset(PreviousScroll);
+    UpdateVisualLabels();
+}
+
+void UHouseSandboxWidget::SetVisualMode(bool bVisual)
+{
+    if (ContentScroll)
+    {
+        if (bShowingVisual) VisualScrollOffset = ContentScroll->GetScrollOffset();
+        else LibraryScrollOffset = ContentScroll->GetScrollOffset();
+    }
+    bShowingVisual = bVisual;
+    if (LibraryPanel) LibraryPanel->SetVisibility(bVisual ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+    if (VisualPanel) VisualPanel->SetVisibility(bVisual ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+    if (ContentScroll) ContentScroll->SetScrollOffset(bVisual ? VisualScrollOffset : LibraryScrollOffset);
+    UpdateVisualLabels();
+}
+
+void UHouseSandboxWidget::ScrollBy(float Amount)
+{
+    if (ContentScroll) ContentScroll->SetScrollOffset(FMath::Max(0.f, ContentScroll->GetScrollOffset() + Amount));
+}
+
+void UHouseSandboxWidget::UpdateVisualLabels()
+{
+    if (!Sandbox || VisualLabels.Num() < 7 || VisualButtons.Num() < 7) return;
+    const FHouseVisualSettings& V = Sandbox->GetVisualSettings();
+    const FHouseMaterialFeatures& F = Sandbox->GetMaterialFeatures();
+    const bool States[7] = { V.bLit, V.bNormal, V.bOcclusion, V.bMetalRough, V.bEmissive, V.bFillLight, V.bShadows };
+    const TCHAR* Names[7] = { TEXT("Materiales realistas"), TEXT("Relieve de superficies"), TEXT("Oclusión del modelo"),
+        TEXT("Mapa metal / rugosidad"), TEXT("Emisión"), TEXT("Luz de relleno"), TEXT("Sombras direccionales · experimental") };
+    const bool Available[7] = { true, F.NormalMaps > 0, F.OcclusionMaps > 0, F.MetalRoughMaps > 0,
+        F.EmissiveMaps > 0, true, true };
+    for (int32 Index = 0; Index < 7; ++Index)
+    {
+        VisualButtons[Index]->SetIsEnabled(Available[Index]);
+        VisualLabels[Index]->SetText(FText::FromString(FString::Printf(TEXT("%s   ·   %s"), Names[Index],
+            Available[Index] ? (States[Index] ? TEXT("ACTIVO") : TEXT("APAGADO")) : TEXT("SIN MAPA EN ESTE GLB"))));
+    }
+}
+
+void UHouseSandboxWidget::ActivateVisualControl(int32 Feature)
+{
+    if (Sandbox) Sandbox->ChangeVisualControl(Feature);
 }
 
 void UHouseSandboxWidget::OpenFile(const FString& FileName)
@@ -578,6 +878,7 @@ void UHouseSandboxWidget::OpenRemote(const FString& Url)
 void UHouseSandboxWidget::SetRemoteModels(const TArray<TPair<FString, FString>>& Models)
 {
     if (!RemoteList) return;
+    const float PreviousScroll = ContentScroll ? ContentScroll->GetScrollOffset() : 0.f;
     RemoteList->ClearChildren();
     for (const TPair<FString, FString>& Model : Models)
     {
@@ -586,11 +887,18 @@ void UHouseSandboxWidget::SetRemoteModels(const TArray<TPair<FString, FString>>&
         Button->ParentMenu = this;
         UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
         Label->SetText(FText::FromString(TEXT("DESCARGAR  |  ") + Model.Key));
+        FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
+        Label->SetAutoWrapText(true);
+        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseRemoteButton::ActivateRemote);
-        RemoteList->AddChildToVerticalBox(Button);
+        if (UVerticalBoxSlot* Slot = RemoteList->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
     }
+    if (ContentScroll) ContentScroll->SetScrollOffset(PreviousScroll);
 }
+void UHouseSandboxWidget::OnShowLibrary() { if (Sandbox) Sandbox->ShowPanel(EHousePanel::Library); }
+void UHouseSandboxWidget::OnShowVisual() { if (Sandbox) Sandbox->ShowPanel(EHousePanel::Visual); }
+void UHouseSandboxWidget::OnRecenter() { if (Sandbox) Sandbox->ShowPanel(Sandbox->GetActivePanel()); }
 void UHouseSandboxWidget::OnSyncHub()
 {
     if (Sandbox && HubBox) Sandbox->FetchHubModels(HubBox->GetText().ToString());

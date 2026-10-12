@@ -18,6 +18,7 @@ class UScrollBox;
 class UWidgetInteractionComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UInputMappingContext;
 class ADirectionalLight;
 
 enum class EHousePanel : uint8 { Closed, Library, Visual };
@@ -143,6 +144,7 @@ private:
     UPROPERTY() TObjectPtr<UMaterialInterface> CookedLitOpaque;
     UPROPERTY() TObjectPtr<UMaterialInterface> CookedLitMasked;
     UPROPERTY() TObjectPtr<UMaterialInterface> CookedLitBlend;
+    UPROPERTY() TObjectPtr<UInputMappingContext> HouseButtonContext;
     FHouseMaterialFeatures MaterialFeatures;
     FHouseVisualSettings VisualSettings;
     EHousePanel ActivePanel = EHousePanel::Library;

@@ -6,6 +6,8 @@
 #include "Components/WidgetInteractionComponent.h"
 #include "MotionControllerComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "EnhancedInputComponent.h"
+#include "InputAction.h"
 #include "InputMappingContext.h"
 #include "Camera/CameraComponent.h"
 #include "Components/Button.h"
@@ -65,6 +67,8 @@ AHouseSandboxGameMode::AHouseSandboxGameMode()
     CookedLitOpaque = Opaque.Object;
     CookedLitMasked = Masked.Object;
     CookedLitBlend = Blend.Object;
+    static ConstructorHelpers::FObjectFinder<UInputMappingContext> Buttons(TEXT("/Game/HouseInput/IMC_HouseButtons.IMC_HouseButtons"));
+    HouseButtonContext = Buttons.Object;
 }
 
 AHouseMenuInputActor::AHouseMenuInputActor()
@@ -116,14 +120,31 @@ void AHouseMenuInputActor::Initialize(APawn* Pawn)
         InputComponent->BindAxisKey(EKeys::OculusTouch_Left_Thumbstick_X, this, &AHouseMenuInputActor::MoveRightAxis).bConsumeInput = false;
         InputComponent->BindAxisKey(EKeys::OculusTouch_Right_Thumbstick_X, this, &AHouseMenuInputActor::TurnAxis).bConsumeInput = false;
         InputComponent->BindAxisKey(EKeys::OculusTouch_Right_Thumbstick_Y, this, &AHouseMenuInputActor::ScrollAxis).bConsumeInput = false;
-        InputComponent->BindKey(EKeys::OculusTouch_Left_X_Click, IE_Pressed, this, &AHouseMenuInputActor::XDown).bConsumeInput = true;
-        InputComponent->BindKey(EKeys::OculusTouch_Left_X_Click, IE_Released, this, &AHouseMenuInputActor::XUp).bConsumeInput = true;
-        InputComponent->BindKey(EKeys::OculusTouch_Left_Y_Click, IE_Pressed, this, &AHouseMenuInputActor::YDown).bConsumeInput = true;
-        InputComponent->BindKey(EKeys::OculusTouch_Left_Y_Click, IE_Released, this, &AHouseMenuInputActor::YUp).bConsumeInput = true;
-        InputComponent->BindKey(EKeys::OculusTouch_Right_A_Click, IE_Pressed, this, &AHouseMenuInputActor::ADown).bConsumeInput = true;
-        InputComponent->BindKey(EKeys::OculusTouch_Right_A_Click, IE_Released, this, &AHouseMenuInputActor::AUp).bConsumeInput = true;
-        InputComponent->BindKey(EKeys::OculusTouch_Right_B_Click, IE_Pressed, this, &AHouseMenuInputActor::BDown).bConsumeInput = true;
-        InputComponent->BindKey(EKeys::OculusTouch_Right_B_Click, IE_Released, this, &AHouseMenuInputActor::BUp).bConsumeInput = true;
+        if (UEnhancedInputComponent* Enhanced = Cast<UEnhancedInputComponent>(InputComponent))
+        {
+            const UInputAction* X = LoadObject<UInputAction>(nullptr, TEXT("/Game/HouseInput/IA_HouseX.IA_HouseX"));
+            const UInputAction* Y = LoadObject<UInputAction>(nullptr, TEXT("/Game/HouseInput/IA_HouseY.IA_HouseY"));
+            const UInputAction* A = LoadObject<UInputAction>(nullptr, TEXT("/Game/HouseInput/IA_HouseA.IA_HouseA"));
+            const UInputAction* B = LoadObject<UInputAction>(nullptr, TEXT("/Game/HouseInput/IA_HouseB.IA_HouseB"));
+            if (X && Y && A && B)
+            {
+                Enhanced->BindAction(X, ETriggerEvent::Started, this, &AHouseMenuInputActor::XDown);
+                Enhanced->BindAction(X, ETriggerEvent::Completed, this, &AHouseMenuInputActor::XUp);
+                Enhanced->BindAction(X, ETriggerEvent::Canceled, this, &AHouseMenuInputActor::XUp);
+                Enhanced->BindAction(Y, ETriggerEvent::Started, this, &AHouseMenuInputActor::YDown);
+                Enhanced->BindAction(Y, ETriggerEvent::Completed, this, &AHouseMenuInputActor::YUp);
+                Enhanced->BindAction(Y, ETriggerEvent::Canceled, this, &AHouseMenuInputActor::YUp);
+                Enhanced->BindAction(A, ETriggerEvent::Started, this, &AHouseMenuInputActor::ADown);
+                Enhanced->BindAction(A, ETriggerEvent::Completed, this, &AHouseMenuInputActor::AUp);
+                Enhanced->BindAction(A, ETriggerEvent::Canceled, this, &AHouseMenuInputActor::AUp);
+                Enhanced->BindAction(B, ETriggerEvent::Started, this, &AHouseMenuInputActor::BDown);
+                Enhanced->BindAction(B, ETriggerEvent::Completed, this, &AHouseMenuInputActor::BUp);
+                Enhanced->BindAction(B, ETriggerEvent::Canceled, this, &AHouseMenuInputActor::BUp);
+                UE_LOG(LogTemp, Display, TEXT("HouseSandbox: four XR button actions bound"));
+            }
+            else UE_LOG(LogTemp, Error, TEXT("HouseSandbox: missing HouseInput action assets"));
+        }
+        else UE_LOG(LogTemp, Error, TEXT("HouseSandbox: EnhancedInputComponent unavailable for XR buttons"));
     }
 }
 
@@ -141,12 +162,14 @@ void AHouseMenuInputActor::Tick(float DeltaSeconds)
     {
         bVisualChordFired = true;
         bXUsedForChord = true;
+        UE_LOG(LogTemp, Display, TEXT("HouseSandbox: X+Y visual chord fired"));
         if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this)))
             Sandbox->ShowPanel(Sandbox->GetActivePanel() == EHousePanel::Visual ? EHousePanel::Closed : EHousePanel::Visual);
     }
     if (bAHeld && bBHeld && !bReturnChordFired && Now - FMath::Max(ADownTime, BDownTime) >= 1.f)
     {
         bReturnChordFired = true;
+        UE_LOG(LogTemp, Display, TEXT("HouseSandbox: A+B return chord fired"));
         if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this))) Sandbox->ReturnToLibrary();
     }
     const float Step = FMath::Min(DeltaSeconds, 0.05f);
@@ -220,7 +243,7 @@ void AHouseMenuInputActor::ToggleMenu()
         Sandbox->ShowPanel(Sandbox->IsMenuVisible() ? EHousePanel::Closed : EHousePanel::Library);
 }
 
-void AHouseMenuInputActor::XDown() { bXHeld = true; XDownTime = GetWorld()->GetTimeSeconds(); if (bYHeld) bXUsedForChord = true; }
+void AHouseMenuInputActor::XDown() { bXHeld = true; XDownTime = GetWorld()->GetTimeSeconds(); if (bYHeld) bXUsedForChord = true; UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR X pressed")); }
 void AHouseMenuInputActor::XUp()
 {
     if (!bXUsedForChord && !bYHeld) ToggleMenu();
@@ -228,11 +251,11 @@ void AHouseMenuInputActor::XUp()
     bXUsedForChord = false;
     if (!bYHeld) bVisualChordFired = false;
 }
-void AHouseMenuInputActor::YDown() { bYHeld = true; YDownTime = GetWorld()->GetTimeSeconds(); if (bXHeld) bXUsedForChord = true; }
+void AHouseMenuInputActor::YDown() { bYHeld = true; YDownTime = GetWorld()->GetTimeSeconds(); if (bXHeld) bXUsedForChord = true; UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR Y pressed")); }
 void AHouseMenuInputActor::YUp() { bYHeld = false; if (!bXHeld) bVisualChordFired = false; }
-void AHouseMenuInputActor::ADown() { bAHeld = true; ADownTime = GetWorld()->GetTimeSeconds(); }
+void AHouseMenuInputActor::ADown() { bAHeld = true; ADownTime = GetWorld()->GetTimeSeconds(); UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR A pressed")); }
 void AHouseMenuInputActor::AUp() { bAHeld = false; if (!bBHeld) bReturnChordFired = false; }
-void AHouseMenuInputActor::BDown() { bBHeld = true; BDownTime = GetWorld()->GetTimeSeconds(); }
+void AHouseMenuInputActor::BDown() { bBHeld = true; BDownTime = GetWorld()->GetTimeSeconds(); UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR B pressed")); }
 void AHouseMenuInputActor::BUp() { bBHeld = false; if (!bAHeld) bReturnChordFired = false; }
 
 void AHouseSandboxGameMode::BeginPlay()

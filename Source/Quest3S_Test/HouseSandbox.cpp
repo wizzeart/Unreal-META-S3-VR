@@ -678,11 +678,13 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
     // Look for a nearby clear floor position before placing the headset.
     FVector SpawnPosition = FVector::ZeroVector;
     bool bFoundClearFloor = false;
+    float BestSpawnScore = -TNumericLimits<float>::Max();
     const FCollisionQueryParams SpawnTraceParams(SCENE_QUERY_STAT(HouseSpawn), true);
-    for (int32 Ring = 0; Ring <= 4 && !bFoundClearFloor; ++Ring)
+    const FVector2D Directions[4] = {FVector2D(1, 0), FVector2D(-1, 0), FVector2D(0, 1), FVector2D(0, -1)};
+    for (int32 Ring = 0; Ring <= 4; ++Ring)
     {
-        for (int32 GridY = -Ring; GridY <= Ring && !bFoundClearFloor; ++GridY)
-        for (int32 GridX = -Ring; GridX <= Ring && !bFoundClearFloor; ++GridX)
+        for (int32 GridY = -Ring; GridY <= Ring; ++GridY)
+        for (int32 GridX = -Ring; GridX <= Ring; ++GridX)
         {
             if (FMath::Max(FMath::Abs(GridX), FMath::Abs(GridY)) != Ring) continue;
             const FVector Candidate(GridX * 150.f, GridY * 150.f, 0.f);
@@ -691,11 +693,36 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
                 || FloorHit.ImpactNormal.Z < 0.6f || FMath::Abs(FloorHit.ImpactPoint.Z) > 35.f) continue;
             FHitResult CeilingHit;
             if (NewMesh->LineTraceComponent(CeilingHit, Candidate + FVector(0, 0, 15), Candidate + FVector(0, 0, 205), SpawnTraceParams)) continue;
-            SpawnPosition = Candidate;
-            bFoundClearFloor = true;
+            bool bBodyClear = true;
+            for (const FVector2D& Direction : Directions)
+            {
+                const FVector Offset(Direction.X * 45.f, Direction.Y * 45.f, 0.f);
+                FHitResult BodyHit;
+                if (NewMesh->LineTraceComponent(BodyHit, Candidate + Offset + FVector(0, 0, 35), Candidate + Offset + FVector(0, 0, 180), SpawnTraceParams))
+                {
+                    bBodyClear = false;
+                    break;
+                }
+            }
+            if (!bBodyClear) continue;
+            float Score = -0.25f * Candidate.Size2D();
+            for (const FVector2D& Direction : Directions)
+            {
+                const FVector Eye = Candidate + FVector(0, 0, 155);
+                FHitResult ViewHit;
+                const FVector End = Eye + FVector(Direction.X * 260.f, Direction.Y * 260.f, 0.f);
+                Score += NewMesh->LineTraceComponent(ViewHit, Eye, End, SpawnTraceParams) ? ViewHit.Distance : 260.f;
+            }
+            if (Score > BestSpawnScore)
+            {
+                BestSpawnScore = Score;
+                SpawnPosition = Candidate;
+                bFoundClearFloor = true;
+            }
         }
     }
-    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: spawn X=%.0f Y=%.0f clear_floor=%d"), SpawnPosition.X, SpawnPosition.Y, bFoundClearFloor);
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: spawn X=%.0f Y=%.0f clear_floor=%d openness=%.0f"),
+        SpawnPosition.X, SpawnPosition.Y, bFoundClearFloor, bFoundClearFloor ? BestSpawnScore : 0.f);
     if (HouseActor) HouseActor->Destroy();
     HouseActor = NewActor;
     HouseMesh = NewMesh;

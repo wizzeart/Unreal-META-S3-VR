@@ -173,6 +173,9 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                                 uint8* Destination = Target + (int64(Y) * Width + X) * 4;
                                 for (int32 Channel = 0; Channel < 4; ++Channel) Destination[Channel] = static_cast<uint8>((Sum[Channel] + Samples / 2) / Samples);
                             }
+                            // glTF normals use OpenGL's +Y convention; Unreal's normal sampler expects -Y.
+                            if (bNormal) for (int64 Pixel = 0; Pixel < int64(Width) * Height; ++Pixel)
+                                Target[Pixel * 4 + 1] = 255 - Target[Pixel * 4 + 1];
                             Mip.BulkData.Unlock();
                             Result->SRGB = bSrgb;
                             Result->CompressionSettings = bNormal ? TC_Normalmap : (bSrgb ? TC_Default : TC_Masks);
@@ -431,6 +434,11 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                     const auto* EmissiveArray = Array(Material, TEXT("emissiveFactor"));
                     if (EmissiveArray && EmissiveArray->Num() == 3)
                         EmissiveFactor = FLinearColor((*EmissiveArray)[0]->AsNumber(), (*EmissiveArray)[1]->AsNumber(), (*EmissiveArray)[2]->AsNumber());
+                    const TSharedPtr<FJsonObject>* ExtensionsPtr = nullptr;
+                    const TSharedPtr<FJsonObject>* EmissiveStrengthPtr = nullptr;
+                    if (Material.IsValid() && Material->TryGetObjectField(TEXT("extensions"), ExtensionsPtr)
+                        && (*ExtensionsPtr)->TryGetObjectField(TEXT("KHR_materials_emissive_strength"), EmissiveStrengthPtr))
+                        EmissiveFactor *= FMath::Clamp(Scalar(*EmissiveStrengthPtr, TEXT("emissiveStrength"), 1.f), 0.f, 10.f);
                     if (!EmissiveFactor.Equals(FLinearColor::Black))
                         ++Features.EmissiveMaps;
                     if (!BaseColor) BaseColor = WhiteTexture;

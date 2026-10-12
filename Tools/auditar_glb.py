@@ -73,9 +73,18 @@ def auditar(ruta: Path) -> bool:
             avisos.append("hay imágenes externas que el importador no carga")
         if imagen.get("mimeType") not in ("image/png", "image/jpeg", None):
             avisos.append("hay imágenes que no son PNG/JPEG")
-    if any(m.get("normalTexture") or m.get("occlusionTexture") or
-           m.get("pbrMetallicRoughness", {}).get("metallicRoughnessTexture") for m in materiales):
-        avisos.append("los mapas normales, AO y metálico/rugosidad no se reproducen como PBR")
+    for material in materiales:
+        pbr = material.get("pbrMetallicRoughness", {})
+        for nombre, info in (("color base", pbr.get("baseColorTexture")),
+                             ("metálico/rugosidad", pbr.get("metallicRoughnessTexture")),
+                             ("normal", material.get("normalTexture")),
+                             ("oclusión", material.get("occlusionTexture")),
+                             ("emisión", material.get("emissiveTexture"))):
+            if isinstance(info, dict) and info.get("texCoord", 0) != 0:
+                avisos.append(f"un mapa de {nombre} usa TEXCOORD_{info['texCoord']}, aún no compatible")
+    for extension in documento.get("extensionsUsed", []):
+        if extension.startswith("KHR_materials_") and extension != "KHR_materials_emissive_strength":
+            avisos.append(f"la extensión {extension} todavía no se reproduce por completo")
 
     print(f"{ruta.name}: {tamano / 1048576:.1f} MiB, {primitivas} primitivas, "
           f"{triangulos} triángulos de origen, {len(materiales)} materiales, {len(imagenes)} imágenes")

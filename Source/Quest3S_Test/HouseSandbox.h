@@ -17,6 +17,7 @@ class UVerticalBox;
 class UScrollBox;
 class UWidgetInteractionComponent;
 class UMaterialInstanceDynamic;
+class UMaterialInterface;
 class ADirectionalLight;
 
 enum class EHousePanel : uint8 { Closed, Library, Visual };
@@ -138,6 +139,10 @@ private:
     UPROPERTY() TObjectPtr<ADirectionalLight> SceneSun;
     UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> LitMaterials;
     UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> ReferenceMaterials;
+    // Hard references keep the runtime-loaded parents in the Android cook.
+    UPROPERTY() TObjectPtr<UMaterialInterface> CookedLitOpaque;
+    UPROPERTY() TObjectPtr<UMaterialInterface> CookedLitMasked;
+    UPROPERTY() TObjectPtr<UMaterialInterface> CookedLitBlend;
     FHouseMaterialFeatures MaterialFeatures;
     FHouseVisualSettings VisualSettings;
     EHousePanel ActivePanel = EHousePanel::Library;

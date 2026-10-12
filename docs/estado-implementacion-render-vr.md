@@ -13,11 +13,14 @@ Rama: `feature/render-vr-menus`. La versión probada en `deploy/releases/quest3s
 ## Verificación realizada
 
 - `Tools/cmd/verificar-entorno.bat`, `python -m py_compile Tools/house_hub.py Tools/make_demo_room.py` y `git diff --check` pasaron.
-- `Tools/cmd/compilar-android.bat` terminó correctamente tras los últimos cambios. Este comando compila C++ y genera un APK nativo, pero reutiliza contenido cocinado anterior: el APK resultante **todavía no demuestra** que los nuevos materiales estén disponibles en Quest.
-- La creación de los tres `.uasset` terminó en Unreal Editor sin errores. No se instaló el APK nuevo en el visor ni se cambió el release probado.
+- Windows SDK 10.0.26100.0 quedó instalado con autorización del usuario. `Quest3S_TestEditor Win64 Development` y el C++ Android compilaron correctamente tras los últimos cambios.
+- Cook Android ASTC finalizó con 727 paquetes cocinados y 0 errores. `RunUAT BuildCookRun -skipcook -stage -pak -iostore -package` terminó con código 0. La comprobación de `Quest3S_Test-Android_ASTC.utoc` con `UnrealPak -List` mostró los tres `M_HouseLit*.uasset`, además del archivo de shaders Vulkan ES3.1.
+- El candidato está en `deploy/releases/quest3s-visual-candidate/` con APK, OBB, cinco archivos de contenido y hashes SHA-256. APK y OBB se instalaron por ADB con `install -r`, sin desinstalar la app ni borrar `Houses`; también se copiaron los cinco archivos de contenido actualizados. El log de Android confirma que montó el OBB. Los GLB guardados siguen presentes.
 
-## Bloqueo para completar y validar en Quest
+## Validación pendiente en el visor
 
-La revisión automática rechazó la ejecución de `Cook` porque `AGENTS.md` conserva la instrucción previa de no cocinar shaders nuevos y consideró que “implementa todo” no la revocaba expresamente. No se intentó el mismo paso por otra vía. Falta autorización explícita del usuario para cocinar shaders nuevos y empaquetar un APK de prueba; después se debe instalar en Quest, comparar materiales y sombras allí, medir FPS y memoria, y corregir cualquier regresión antes de crear un nuevo release.
+El visor muestra un aviso de sistema para pulsar el botón físico de encendido y activar cámaras y micrófonos; ese aviso cubre la app en la captura ADB. Falta verificar a simple vista el menú, los acordes X+Y y A+B, el cambio de perfiles en un GLB con mapas y el coste de sombras/FPS dentro de Quest. Hasta entonces, el candidato no reemplaza `deploy/releases/quest3s-test-actual/`.
+
+El primer Cook de esta rama necesitó instalar Windows SDK y compilar el módulo de editor. Otro intento de paquete falló porque Cook y UAT apuntaban a almacenes Zen distintos; el candidato final se cocinó y empaquetó usando la misma ubicación predeterminada. No vuelvas a usar `-LocalDataCachePath` solo en Cook si luego UAT empaquetará con Zen predeterminado.
 
 El plan completo y los criterios de aceptación están en [plan-mejoras-visuales-quest3s.md](plan-mejoras-visuales-quest3s.md).

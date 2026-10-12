@@ -59,6 +59,12 @@ AHouseSandboxGameMode::AHouseSandboxGameMode()
 {
     static ConstructorHelpers::FClassFinder<APawn> XRPawn(TEXT("/Game/XRFramework/Blueprints/BP_XRPawn"));
     if (XRPawn.Succeeded()) DefaultPawnClass = XRPawn.Class;
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> Opaque(TEXT("/Game/HouseMaterials/M_HouseLitOpaque.M_HouseLitOpaque"));
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> Masked(TEXT("/Game/HouseMaterials/M_HouseLitMasked.M_HouseLitMasked"));
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> Blend(TEXT("/Game/HouseMaterials/M_HouseLitBlend.M_HouseLitBlend"));
+    CookedLitOpaque = Opaque.Object;
+    CookedLitMasked = Masked.Object;
+    CookedLitBlend = Blend.Object;
 }
 
 AHouseMenuInputActor::AHouseMenuInputActor()
@@ -708,7 +714,7 @@ bool UHouseSandboxWidget::Initialize()
         FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
         Text->SetAutoWrapText(true);
         Button->AddChild(Text);
-        if (UVerticalBoxSlot* Slot = Parent->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
+        if (UVerticalBoxSlot* MenuSlot = Parent->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
         return Button;
     };
     AddText(Frame, TEXT("CASAS VR    ·    BIBLIOTECA Y VISUALES"), 38);
@@ -727,9 +733,9 @@ bool UHouseSandboxWidget::Initialize()
     VisualTab->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnShowVisual);
     Tabs->AddChildToHorizontalBox(VisualTab);
     ContentScroll = WidgetTree->ConstructWidget<UScrollBox>();
-    if (UVerticalBoxSlot* Slot = Frame->AddChildToVerticalBox(ContentScroll))
+    if (UVerticalBoxSlot* MenuSlot = Frame->AddChildToVerticalBox(ContentScroll))
     {
-        FSlateChildSize Size; Size.SizeRule = ESlateSizeRule::Fill; Slot->SetSize(Size);
+        FSlateChildSize Size; Size.SizeRule = ESlateSizeRule::Fill; MenuSlot->SetSize(Size);
     }
     LibraryPanel = WidgetTree->ConstructWidget<UVerticalBox>();
     ContentScroll->AddChild(LibraryPanel);
@@ -770,7 +776,7 @@ bool UHouseSandboxWidget::Initialize()
         FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
         Button->AddChild(Text);
         Button->OnClicked.AddDynamic(Button, &UHouseVisualButton::ActivateVisual);
-        if (UVerticalBoxSlot* Slot = VisualPanel->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
+        if (UVerticalBoxSlot* MenuSlot = VisualPanel->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
         if (Feature < 100) { VisualButtons.Add(Button); VisualLabels.Add(Text); }
         return Text;
     };
@@ -819,7 +825,7 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
         Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseFileButton::ActivateFile);
-        if (UVerticalBoxSlot* Slot = FileList->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
+        if (UVerticalBoxSlot* MenuSlot = FileList->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
     }
     if (ContentScroll) ContentScroll->SetScrollOffset(PreviousScroll);
     UpdateVisualLabels();
@@ -892,7 +898,7 @@ void UHouseSandboxWidget::SetRemoteModels(const TArray<TPair<FString, FString>>&
         Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseRemoteButton::ActivateRemote);
-        if (UVerticalBoxSlot* Slot = RemoteList->AddChildToVerticalBox(Button)) Slot->SetPadding(FMargin(0.f, 7.f));
+        if (UVerticalBoxSlot* MenuSlot = RemoteList->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
     }
     if (ContentScroll) ContentScroll->SetScrollOffset(PreviousScroll);
 }

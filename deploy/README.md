@@ -6,4 +6,6 @@ Ejecuta `git lfs pull`, `Tools\cmd\verificar-release.bat` y `Tools\cmd\instalar-
 
 `artifacts/` y `logs/` están reservadas para salidas locales futuras y se ignoran en Git. No guardes aquí credenciales, keystores privados ni datos personales. Los GLB de la laptop están en `Tools/models/`; los modelos que el usuario descargue en el visor quedan en su carpeta `Houses` y no se incluyen en este release.
 
+`releases/quest3s-visual-candidate/` contiene el APK Android ASTC, OBB y cinco paquetes de contenido de la rama visual. Es un **candidato pendiente de comprobar dentro del visor**; no sustituye la versión probada. `SHA256SUMS.txt` registra los siete archivos. Con Quest conectada, `Tools\cmd\instalar-candidato-visual.bat` instala sobre la aplicación existente con `adb install -r`, copia OBB y paquetes, configura el puente USB y abre la app. Conserva los modelos de `Houses`.
+
 La versión actual es una captura binaria de desarrollo, sin firma de distribución comercial. Para publicar una versión firmada, hace falta un proceso de entrega específico y autorización separada. Consulta `docs/operacion.md` para comandos y rutas.

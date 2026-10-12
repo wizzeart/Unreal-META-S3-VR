@@ -26,7 +26,7 @@ La caja del modelo se centra horizontalmente. El importador estima el suelo por 
 
 ## Estado de materiales
 
-El importador usa `Widget3DPassThrough_*_OneSided`, ya incluidos en los recursos cocinados. Carga color base, `baseColorFactor` y modos `OPAQUE`, `MASK` o `BLEND` cuando existen los padres correspondientes. Los materiales siguen siendo esencialmente **sin iluminación PBR**; la luz de recorrido de la cámara no convierte sus superficies en materiales PBR. No se aplican `normalTexture`, `metallicRoughnessTexture`, `occlusionTexture`, sombras dinámicas de la casa ni AO de pantalla.
+El perfil Referencia usa `Widget3DPassThrough_*_OneSided`, ya incluidos en el release probado. Los perfiles iluminados de la rama `feature/render-vr-menus` usan tres materiales nuevos `Default Lit` para `OPAQUE`, `MASK` y `BLEND`. El importador lee `baseColorTexture`, `metallicRoughnessTexture`, `normalTexture`, `occlusionTexture` y `emissiveTexture`, sus factores glTF y tangentes calculadas para UV0. Omite mapas que usan otra coordenada de textura y lo registra en `HouseSandbox:`. Las sombras direccionales se pueden activar de forma experimental; AO de pantalla y sombras calculadas por cada luz glTF no están implementadas. Los materiales nuevos están cocinados en el candidato Android ASTC y necesitan validación visual en Quest antes de considerarse parte del release probado.
 
 La configuración contiene opciones generales de Unreal como MSAA móvil, pero algunas funciones de escritorio presentes en `DefaultEngine.ini` no están disponibles en el renderizador Quest. No cambies los ajustes visuales basándote solo en el INI; valida en el visor.
 
@@ -47,4 +47,5 @@ La lectura y construcción son sincrónicas en el hilo de juego; un GLB grande p
 
 - Laptop: `Tools/models/` contiene los GLB subidos y los ejemplos versionados.
 - Quest: el directorio persistente privado de la app, subcarpeta `Houses`, guarda descargas y archivos elegidos. En el dispositivo probado aparece bajo `/sdcard/Android/data/com.Allnovu.testMeta/files/Houses`.
+- Las opciones visuales se guardan en `Houses/visual_settings.json` y se pueden cambiar desde el panel abierto con **X + Y**.
 - La app no usa una nube externa ni FTP. El transporte actual es HTTP local y copia al almacenamiento del visor.

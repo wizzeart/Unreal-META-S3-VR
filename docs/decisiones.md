@@ -8,15 +8,15 @@ Se probó aplicar `/Game/Weapons/Rifle/Materials/M_Weapon` a las superficies opa
 
 ## Restricción de compilación
 
-El usuario pidió expresamente **no cocinar shaders nuevos**. No se incluye automatización para cocinar recursos. El paquete de `deploy/releases/quest3s-test-actual` es una copia de la versión ya probada, no una compilación nueva. `Build.bat` de Unreal puede compilar C++ Android sobre contenido ya cocinado del entorno actual; un clon limpio no genera un APK completo solo con ese comando.
+La instrucción anterior de no cocinar shaders nuevos fue revocada para esta implementación: el usuario autorizó expresamente Cook, empaquetado Android ASTC e instalación temporal en Quest. Los scripts de operación siguen instalando el release probado; `Build.bat` por sí solo compila C++ Android y no genera el contenido nuevo. El paquete de `deploy/releases/quest3s-test-actual` conserva la versión ya probada.
 
-La máquina de desarrollo carece del componente C++ x64 de Windows SDK que Unreal pedía para compilar `Quest3S_TestEditor Win64` en la ruta de empaquetado completo. Hubo un intento de instalación por el instalador oficial; no completó la instalación. Tras la instrucción del usuario se detuvo la descarga de la ISO, se eliminaron los archivos parciales y no se instaló el SDK.
+El primer intento de Cook de esta rama falló porque faltaba Windows SDK para compilar `Quest3S_TestEditor` en Win64; UnrealBuildTool solicitaba al menos 10.0.19041.0. Con autorización del usuario se instaló Windows SDK 10.0.26100 mediante Visual Studio Installer. Después, el módulo de editor compiló y Cook Android ASTC terminó correctamente. No se reanudó la descarga de la ISO detenida anteriormente.
 
 ## Próximas mejoras posibles sin alterar la versión de referencia
 
 - Medir duración de importación y uso de memoria en varios GLB.
 - Revisar el contenido de los archivos antes de exportar desde 3ds Max: imágenes embebidas, tamaño y geometría.
 - Mejorar documentación y herramientas de diagnóstico del hub y de ADB.
-- Cuando exista autorización específica para cambiar el renderizado, diseñar y medir una ruta PBR móvil. Ese trabajo requiere pruebas en Quest y queda fuera de la automatización actual.
+- Medir en Quest la ruta de materiales iluminados y las sombras de esta rama antes de promoverla a release.
 
 La prioridad es conservar el aspecto que el usuario aprobó y el movimiento fluido. `docs/colaboracion.md` explica cómo registrar cambios y verificaciones.

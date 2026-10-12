@@ -3,6 +3,7 @@
 *.glb filter=lfs diff=lfs merge=lfs -text
 Content/Oculus/Tools/*.exe filter=lfs diff=lfs merge=lfs -text
 deploy/releases/**/*.apk filter=lfs diff=lfs merge=lfs -text
+deploy/releases/**/*.obb filter=lfs diff=lfs merge=lfs -text
 deploy/releases/**/*.pak filter=lfs diff=lfs merge=lfs -text
 deploy/releases/**/*.ucas filter=lfs diff=lfs merge=lfs -text
 deploy/releases/**/*.utoc filter=lfs diff=lfs merge=lfs -text

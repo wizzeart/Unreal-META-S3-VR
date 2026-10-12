@@ -11,11 +11,12 @@ Todos los `.bat` se ejecutan desde cualquier carpeta. Resuelven la raíz del pro
 | `Tools\cmd\iniciar-hub.bat` | Sirve biblioteca HTTP en el puerto 8765. | Python 3. |
 | `Tools\cmd\puente-usb.bat` | Crea el puente `adb reverse`. | Quest autorizada por ADB. |
 | `Tools\cmd\instalar-release.bat` | Instala APK probado, copia paquetes y abre la app. | Quest, release completo. |
+| `Tools\cmd\instalar-candidato-visual.bat` | Instala el candidato visual, OBB y paquetes sin borrar modelos. | Quest, `git lfs pull`; validación en visor pendiente. |
 | `Tools\cmd\abrir-app.bat` | Fuerza cierre y abre la app instalada. | Quest con APK y contenido. |
 | `Tools\cmd\capturar-log.bat` | Copia el log Unreal a `deploy/logs/quest_actual.log`. | Quest conectada. |
 | `Tools\cmd\compilar-android.bat` | Compila C++ Android con `Build.bat`. | Unreal 5.8 y contenido cocinado local previo para APK funcional. |
 
-Ningún script ejecuta `Cook` o `BuildCookRun`. El binario de `deploy/releases` ya contiene la versión probada. La compilación de código nativo en un clon limpio no sustituye el contenido cocinado del release.
+Ningún script ejecuta `Cook` o `BuildCookRun`. `quest3s-test-actual` conserva la versión probada y `quest3s-visual-candidate` contiene el nuevo paquete todavía pendiente de prueba en el visor. La compilación de código nativo en un clon limpio no sustituye el contenido cocinado de los paquetes.
 
 ## Flujo USB
 

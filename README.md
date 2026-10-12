@@ -11,7 +11,7 @@ Proyecto Unreal Engine 5.8 para cargar viviendas GLB desde una biblioteca web lo
 5. Para instalar la versión probada, ejecuta `Tools\cmd\instalar-release.bat`. Se copian el APK y sus paquetes de contenido; no se cocina ningún shader.
 6. En Quest, usa **VER MODELOS DE LA LAPTOP**. También puedes usar **ABRIR ARCHIVO DEL DISPOSITIVO** o elegir un GLB guardado.
 
-El control izquierdo mueve al jugador; la palanca derecha gira. El gatillo derecho pulsa el panel y **X** del control izquierdo abre o cierra la biblioteca.
+El control izquierdo mueve al jugador; la palanca derecha gira y desplaza el menú cuando está abierto. El gatillo derecho pulsa el panel. Una pulsación corta de **X** abre o cierra la biblioteca; mantén **X + Y** durante 0,6 s para abrir las opciones visuales. Mantén **A + B** durante 1 s para liberar el modelo y volver a la biblioteca.
 
 ## Mapa del repositorio
 
@@ -29,9 +29,9 @@ El control izquierdo mueve al jugador; la palanca derecha gira. El gatillo derec
 
 ## Estado visual y de compilación
 
-Los GLB usan color base, tintes y transparencia básica mediante materiales ya existentes en Unreal. El proyecto selecciona MSAA móvil en su configuración. La importación **no interpreta** mapas normales, metálico, rugosidad u oclusión ambiental como materiales PBR completos. No hay sombras nuevas para la casa importada. Una prueba con otro material se retiró porque oscurecía paredes y sobreexponía el suelo.
+La rama `feature/render-vr-menus` incorpora materiales iluminados para color base, metal/rugosidad, normales, oclusión y emisión de GLB, junto con perfiles y controles individuales persistentes. La luz de relleno es opcional; las sombras direccionales son experimentales y están apagadas por defecto. El perfil Referencia conserva el aspecto anterior. Los mapas que requieran otra coordenada de textura distinta de UV0 todavía se omiten.
 
-La instrucción vigente para este trabajo es **no cocinar shaders nuevos**. Los scripts de este repositorio no ejecutan `RunUAT BuildCookRun` ni el comando `Cook`. El build nativo Android puede reutilizar contenido ya cocinado del equipo actual; para desplegar desde un clon limpio usa `deploy/releases`.
+Los materiales nuevos ya se cocinaron y empaquetaron en `deploy/releases/quest3s-visual-candidate/`, y ese candidato se instaló por ADB. Falta comprobar el resultado dentro del visor. El release probado en `deploy/releases/quest3s-test-actual/` sigue siendo la versión anterior; `Tools\cmd\instalar-release.bat` lo instala y `Tools\cmd\instalar-candidato-visual.bat` instala el candidato. Consulta [el estado de validación](docs/estado-implementacion-render-vr.md) antes de usarlo.
 
 ## Documentación
 

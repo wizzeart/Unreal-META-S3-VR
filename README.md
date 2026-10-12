@@ -31,7 +31,7 @@ El control izquierdo mueve al jugador; la palanca derecha gira y desplaza el men
 
 La rama `feature/render-vr-menus` incorpora materiales iluminados para color base, metal/rugosidad, normales, oclusión y emisión de GLB, junto con perfiles y controles individuales persistentes. La luz de relleno es opcional; las sombras direccionales son experimentales y están apagadas por defecto. El perfil Referencia conserva el aspecto anterior. Los mapas que requieran otra coordenada de textura distinta de UV0 todavía se omiten.
 
-Los materiales nuevos ya se cocinaron y empaquetaron en `deploy/releases/quest3s-visual-candidate/`, y ese candidato se instaló por ADB. Falta comprobar el resultado dentro del visor. El release probado en `deploy/releases/quest3s-test-actual/` sigue siendo la versión anterior; `Tools\cmd\instalar-release.bat` lo instala y `Tools\cmd\instalar-candidato-visual.bat` instala el candidato. Consulta [el estado de validación](docs/estado-implementacion-render-vr.md) antes de usarlo.
+Los materiales nuevos ya se cocinaron y empaquetaron en `deploy/releases/quest3s-visual-candidate/`, y ese candidato se instaló por ADB. A+B devolvió a la biblioteca en el visor y X+Y abrió las opciones visuales según la comprobación del usuario. Queda evaluar perfiles, legibilidad y rendimiento en una vivienda. El release probado en `deploy/releases/quest3s-test-actual/` sigue siendo la versión anterior; `Tools\cmd\instalar-release.bat` lo instala y `Tools\cmd\instalar-candidato-visual.bat` instala el candidato. Consulta [el estado de validación](docs/estado-implementacion-render-vr.md) antes de usarlo.
 
 ## Documentación
 

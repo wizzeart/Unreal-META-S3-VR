@@ -158,8 +158,20 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                             if (Scale == 1) FMemory::Memcpy(Target, Pixels.GetData(), TextureBytes);
                             else for (int32 Y = 0; Y < Height; ++Y) for (int32 X = 0; X < Width; ++X)
                             {
-                                const uint8* Source = Pixels.GetData() + (int64(Y * Scale) * SourceWidth + X * Scale) * 4;
-                                FMemory::Memcpy(Target + (int64(Y) * Width + X) * 4, Source, 4);
+                                // A nearest-neighbour reduction aliases fine textures badly in the visor.
+                                const int32 X0 = X * Scale;
+                                const int32 Y0 = Y * Scale;
+                                const int32 X1 = FMath::Min(X0 + Scale, SourceWidth);
+                                const int32 Y1 = FMath::Min(Y0 + Scale, SourceHeight);
+                                uint32 Sum[4] = {0, 0, 0, 0};
+                                for (int32 Sy = Y0; Sy < Y1; ++Sy) for (int32 Sx = X0; Sx < X1; ++Sx)
+                                {
+                                    const uint8* Source = Pixels.GetData() + (int64(Sy) * SourceWidth + Sx) * 4;
+                                    for (int32 Channel = 0; Channel < 4; ++Channel) Sum[Channel] += Source[Channel];
+                                }
+                                const uint32 Samples = (X1 - X0) * (Y1 - Y0);
+                                uint8* Destination = Target + (int64(Y) * Width + X) * 4;
+                                for (int32 Channel = 0; Channel < 4; ++Channel) Destination[Channel] = static_cast<uint8>((Sum[Channel] + Samples / 2) / Samples);
                             }
                             Mip.BulkData.Unlock();
                             Result->SRGB = bSrgb;
@@ -174,6 +186,9 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                 }
             }
         }
+        if (!Result)
+            UE_LOG(LogTemp, Warning, TEXT("HouseSandbox: image %d for texture %d unavailable (mime=%s, bytes=%lld, decoded budget=%lld)"),
+                ImageIndex, TextureIndex, *Mime, Length, DecodedTextureBytes);
         LoadedImages.Add(CacheKey, Result);
         return Result;
     };
@@ -239,6 +254,7 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
             FAccessorView Pos = View(Number(Attr, TEXT("POSITION")));
             FAccessorView Normal = View(Number(Attr, TEXT("NORMAL")));
             FAccessorView Tex = View(Number(Attr, TEXT("TEXCOORD_0")));
+            FAccessorView SourceTangent = View(Number(Attr, TEXT("TANGENT")));
             FAccessorView Indices = View(Number(P, TEXT("indices")));
             if (!Pos.Valid() || Pos.Components != 3 || Pos.ComponentType != 5126 || TriangleCount + (Indices.Valid() ? Indices.Count : Pos.Count)/3 > 350000) continue;
             TArray<FVector> Vertices, Normals;
@@ -274,8 +290,9 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
             }
             if (!Triangles.IsEmpty())
             {
-                TArray<FVector> TangentSum;
+                TArray<FVector> TangentSum, BitangentSum;
                 TangentSum.SetNumZeroed(Vertices.Num());
+                BitangentSum.SetNumZeroed(Vertices.Num());
                 for (int32 I = 0; I + 2 < Triangles.Num(); I += 3)
                 {
                     const int32 A = Triangles[I], B = Triangles[I + 1], C = Triangles[I + 2];
@@ -286,16 +303,30 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                     const float Denominator = Uv1.X * Uv2.Y - Uv2.X * Uv1.Y;
                     if (FMath::Abs(Denominator) < 0.00001f) continue;
                     const FVector Tangent = (Edge1 * Uv2.Y - Edge2 * Uv1.Y) / Denominator;
+                    const FVector Bitangent = (Edge2 * Uv1.X - Edge1 * Uv2.X) / Denominator;
                     TangentSum[A] += Tangent; TangentSum[B] += Tangent; TangentSum[C] += Tangent;
+                    BitangentSum[A] += Bitangent; BitangentSum[B] += Bitangent; BitangentSum[C] += Bitangent;
                 }
                 TArray<FProcMeshTangent> Tangents;
                 Tangents.Reserve(Vertices.Num() * 2);
                 for (int32 I = 0; I < Vertices.Num(); ++I)
                 {
-                    FVector Tangent = TangentSum[I] - Normals[I] * FVector::DotProduct(TangentSum[I], Normals[I]);
+                    const bool bAuthoredTangent = SourceTangent.Valid() && SourceTangent.Count == Pos.Count
+                        && SourceTangent.Components == 4 && SourceTangent.ComponentType == 5126 && Normal.Valid();
+                    FVector ExpectedBitangent = BitangentSum[I];
+                    FVector Tangent = TangentSum[I];
+                    if (bAuthoredTangent)
+                    {
+                        const FVector SourceT(SourceTangent.Value(I, 0), SourceTangent.Value(I, 1), SourceTangent.Value(I, 2));
+                        const FVector SourceB = FVector::CrossProduct(ReadVec(Normal, I), SourceT) * SourceTangent.Value(I, 3);
+                        Tangent = ConvertNormal(World.TransformVectorNoScale(SourceT));
+                        ExpectedBitangent = ConvertNormal(World.TransformVectorNoScale(SourceB));
+                    }
+                    Tangent -= Normals[I] * FVector::DotProduct(Tangent, Normals[I]);
                     if (!Tangent.Normalize()) Tangent = FVector::CrossProduct(Normals[I], FVector::UpVector).GetSafeNormal();
                     if (Tangent.IsNearlyZero()) Tangent = FVector::ForwardVector;
-                    Tangents.Emplace(Tangent, false);
+                    const bool bFlipBitangent = FVector::DotProduct(FVector::CrossProduct(Normals[I], Tangent), ExpectedBitangent) < 0.f;
+                    Tangents.Emplace(Tangent, bFlipBitangent);
                 }
                 // Every source face needs a front-facing copy on each side: the
                 // Widget3D two-sided parent paints its back face solid black.
@@ -311,7 +342,7 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
                         Vertices.Add(VertexCopy);
                         Normals.Add(NormalCopy);
                         UV.Add(UvCopy);
-                        Tangents.Emplace(Tangents[I].TangentX, true);
+                        Tangents.Emplace(Tangents[I].TangentX, Tangents[I].bFlipTangentY);
                     }
                     for (int32 I = 0; I < OriginalIndexCount; I += 3)
                     {

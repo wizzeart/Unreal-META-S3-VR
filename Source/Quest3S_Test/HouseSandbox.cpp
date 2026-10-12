@@ -297,8 +297,8 @@ void AHouseSandboxGameMode::PlaceMenuAtPlayer()
     PreviewLight = NewObject<UPointLightComponent>(Pawn, TEXT("HousePreviewLight"));
     PreviewLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
     PreviewLight->SetIntensityUnits(ELightUnits::Lumens);
-    PreviewLight->SetIntensity(450.f);
-    PreviewLight->SetAttenuationRadius(1000.f);
+    PreviewLight->SetIntensity(1500.f);
+    PreviewLight->SetAttenuationRadius(1400.f);
     PreviewLight->SetCastShadows(false);
     PreviewLight->RegisterComponent();
     PreviewLight->SetVisibility(false);
@@ -308,7 +308,7 @@ void AHouseSandboxGameMode::PlaceMenuAtPlayer()
         SceneSun->SetActorRotation(FRotator(-55.f, 25.f, 0.f));
         ULightComponent* Sun = SceneSun->GetLightComponent();
         Sun->SetMobility(EComponentMobility::Movable);
-        Sun->SetIntensity(1.5f);
+        Sun->SetIntensity(3.f);
         Sun->SetCastShadows(false);
         Sun->SetVisibility(false);
     }
@@ -674,6 +674,28 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
     }
     NewActor->SetActorLocation(FVector(-(Min.X + Max.X) / 2, -(Min.Y + Max.Y) / 2, -FloorZ));
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: bounds %s to %s, walkable floor %.1f cm"), *Min.ToString(), *Max.ToString(), FloorZ);
+    // The bounding-box centre can lie inside a wall, furniture or a low roof.
+    // Look for a nearby clear floor position before placing the headset.
+    FVector SpawnPosition = FVector::ZeroVector;
+    bool bFoundClearFloor = false;
+    const FCollisionQueryParams SpawnTraceParams(SCENE_QUERY_STAT(HouseSpawn), true);
+    for (int32 Ring = 0; Ring <= 4 && !bFoundClearFloor; ++Ring)
+    {
+        for (int32 GridY = -Ring; GridY <= Ring && !bFoundClearFloor; ++GridY)
+        for (int32 GridX = -Ring; GridX <= Ring && !bFoundClearFloor; ++GridX)
+        {
+            if (FMath::Max(FMath::Abs(GridX), FMath::Abs(GridY)) != Ring) continue;
+            const FVector Candidate(GridX * 150.f, GridY * 150.f, 0.f);
+            FHitResult FloorHit;
+            if (!NewMesh->LineTraceComponent(FloorHit, Candidate + FVector(0, 0, 70), Candidate - FVector(0, 0, 60), SpawnTraceParams)
+                || FloorHit.ImpactNormal.Z < 0.6f || FMath::Abs(FloorHit.ImpactPoint.Z) > 35.f) continue;
+            FHitResult CeilingHit;
+            if (NewMesh->LineTraceComponent(CeilingHit, Candidate + FVector(0, 0, 15), Candidate + FVector(0, 0, 205), SpawnTraceParams)) continue;
+            SpawnPosition = Candidate;
+            bFoundClearFloor = true;
+        }
+    }
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: spawn X=%.0f Y=%.0f clear_floor=%d"), SpawnPosition.X, SpawnPosition.Y, bFoundClearFloor);
     if (HouseActor) HouseActor->Destroy();
     HouseActor = NewActor;
     HouseMesh = NewMesh;
@@ -686,7 +708,7 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
     ApplyVisualSettings(false);
     if (APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0))
     {
-        Pawn->SetActorLocation(FVector(0, 0, 0));
+        Pawn->SetActorLocation(SpawnPosition);
     }
     SetError(FString::Printf(TEXT("%s cargado: %lld triangulos"), *FileName, TotalTriangles));
     ShowPanel(EHousePanel::Closed);

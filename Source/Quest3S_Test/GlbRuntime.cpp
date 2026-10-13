@@ -111,6 +111,65 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
     UTexture2D* FlatNormal = LoadObject<UTexture2D>(nullptr, TEXT("/Engine/EngineMaterials/DefaultNormal.DefaultNormal"));
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: materials opaque=%d translucent=%d masked=%d"),
         OpaqueMaterial != nullptr, TranslucentMaterial != nullptr, MaskedMaterial != nullptr);
+    constexpr int64 TextureBudget = 128LL * 1024 * 1024;
+    TSet<int64> RequiredImages;
+    auto RequireTexture = [&](const TSharedPtr<FJsonObject>& Owner, const TCHAR* Field, int32 Variant)
+    {
+        const TSharedPtr<FJsonObject>* Info = nullptr;
+        if (!Owner.IsValid() || !Owner->TryGetObjectField(Field, Info) || Number(*Info, TEXT("texCoord"), 0) != 0) return;
+        const int32 ImageIndex = Number(ObjectAt(Textures, Number(*Info, TEXT("index"))), TEXT("source"));
+        if (ImageIndex >= 0) RequiredImages.Add(int64(ImageIndex) * 4 + Variant);
+    };
+    if (Materials) for (const TSharedPtr<FJsonValue>& Value : *Materials)
+    {
+        const TSharedPtr<FJsonObject> Material = Value->AsObject();
+        const TSharedPtr<FJsonObject>* Pbr = nullptr;
+        if (Material.IsValid() && Material->TryGetObjectField(TEXT("pbrMetallicRoughness"), Pbr))
+        {
+            RequireTexture(*Pbr, TEXT("baseColorTexture"), 1);
+            RequireTexture(*Pbr, TEXT("metallicRoughnessTexture"), 0);
+        }
+        RequireTexture(Material, TEXT("normalTexture"), 2);
+        RequireTexture(Material, TEXT("occlusionTexture"), 0);
+        RequireTexture(Material, TEXT("emissiveTexture"), 1);
+    }
+    TMap<int32, FIntPoint> ImageSizes;
+    for (const int64 Key : RequiredImages)
+    {
+        const int32 ImageIndex = static_cast<int32>(Key / 4);
+        if (ImageSizes.Contains(ImageIndex)) continue;
+        const TSharedPtr<FJsonObject> Image = ObjectAt(Images, ImageIndex);
+        const TSharedPtr<FJsonObject> BufferView = ObjectAt(Views, Number(Image, TEXT("bufferView")));
+        const FString Mime = String(Image, TEXT("mimeType"));
+        const int64 Start = Number(BufferView, TEXT("byteOffset"), 0);
+        const int64 Length = Number(BufferView, TEXT("byteLength"), 0);
+        if (!BufferView.IsValid() || Number(BufferView, TEXT("buffer"), 0) != 0 || Start < 0 || Length <= 0
+            || Start + Length > BinLength || (Mime != TEXT("image/png") && Mime != TEXT("image/jpeg"))) continue;
+        IImageWrapperModule& ImageModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+        const TSharedPtr<IImageWrapper> Wrapper = ImageModule.CreateImageWrapper(Mime == TEXT("image/png") ? EImageFormat::PNG : EImageFormat::JPEG);
+        if (Wrapper.IsValid() && Wrapper->SetCompressed(Bin + Start, Length)
+            && Wrapper->GetWidth() > 0 && Wrapper->GetHeight() > 0
+            && Wrapper->GetWidth() <= 4096 && Wrapper->GetHeight() <= 4096)
+            ImageSizes.Add(ImageIndex, FIntPoint(static_cast<int32>(Wrapper->GetWidth()), static_cast<int32>(Wrapper->GetHeight())));
+    }
+    int32 TextureMaxSide = 64;
+    int64 PredictedTextureBytes = 0;
+    for (const int32 CandidateSide : {1024, 512, 256, 128, 64})
+    {
+        int64 NeededBytes = 0;
+        for (const int64 Key : RequiredImages)
+        {
+            const FIntPoint* Size = ImageSizes.Find(static_cast<int32>(Key / 4));
+            if (!Size) continue;
+            const int32 Scale = FMath::Max(1, FMath::Max((Size->X + CandidateSide - 1) / CandidateSide, (Size->Y + CandidateSide - 1) / CandidateSide));
+            NeededBytes += int64((Size->X + Scale - 1) / Scale) * ((Size->Y + Scale - 1) / Scale) * 4;
+        }
+        TextureMaxSide = CandidateSide;
+        PredictedTextureBytes = NeededBytes;
+        if (NeededBytes <= TextureBudget) break;
+    }
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: texture plan variants=%d max_side=%d estimated=%.1f MB budget=128 MB"),
+        RequiredImages.Num(), TextureMaxSide, PredictedTextureBytes / 1048576.0);
     TMap<int64, UTexture2D*> LoadedImages;
     int64 DecodedTextureBytes = 0;
     int32 SuccessfulImageCount = 0;
@@ -140,11 +199,11 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
             {
                 const int32 SourceWidth = static_cast<int32>(Wrapper->GetWidth());
                 const int32 SourceHeight = static_cast<int32>(Wrapper->GetHeight());
-                const int32 Scale = FMath::Max(1, FMath::Max((SourceWidth + 1023) / 1024, (SourceHeight + 1023) / 1024));
+                const int32 Scale = FMath::Max(1, FMath::Max((SourceWidth + TextureMaxSide - 1) / TextureMaxSide, (SourceHeight + TextureMaxSide - 1) / TextureMaxSide));
                 const int32 Width = (SourceWidth + Scale - 1) / Scale;
                 const int32 Height = (SourceHeight + Scale - 1) / Scale;
                 const int64 TextureBytes = int64(Width) * Height * 4;
-                if (TextureBytes <= 128LL * 1024 * 1024 - DecodedTextureBytes)
+                if (TextureBytes <= TextureBudget - DecodedTextureBytes)
                 {
                     TArray64<uint8> Pixels;
                     if (Wrapper->GetRaw(ERGBFormat::BGRA, 8, Pixels)
@@ -497,7 +556,7 @@ bool HouseGlb::BuildMesh(const TArray<uint8>& Bytes, UProceduralMeshComponent* M
             FloorZ = Height;
         }
     }
-    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: decoded %d/%d base images, %.1f MB; assigned %d/%d materials; floor %.1f cm"),
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: decoded %d/%d texture variants, %.1f MB; assigned %d/%d materials; floor %.1f cm"),
         SuccessfulImageCount, LoadedImages.Num(), DecodedTextureBytes / 1048576.f, AppliedMaterialCount, Section, FloorZ);
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: PBR maps normal=%d occlusion=%d metalrough=%d emissive=%d; lit materials=%d"),
         Features.NormalMaps, Features.OcclusionMaps, Features.MetalRoughMaps, Features.EmissiveMaps, LitMaterials.Num());

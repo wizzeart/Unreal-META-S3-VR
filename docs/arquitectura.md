@@ -24,7 +24,7 @@ Los cuatro botones de los acordes se registran como acciones booleanas en `Conte
 
 `HouseGlb::BuildMesh` valida cabecera y bloques GLB 2.0, recorre nodos y transformaciones, lee primitivas trianguladas e imágenes PNG/JPEG embebidas, y construye secciones de `UProceduralMeshComponent`. El cambio de ejes glTF → Unreal invierte la orientación; se invierten índices y se crea una cara opuesta cuando cabe en el límite. Esto conserva color en el interior de habitaciones cuya geometría mira hacia fuera. La malla usa colisión compleja para recorrer paredes y muebles.
 
-La caja del modelo se centra horizontalmente. El importador estima el suelo por el área horizontal dominante de la mitad inferior, mueve el modelo para que ese suelo quede en Z=0 y coloca al pawn en el origen. La escala es 100 unidades Unreal por metro GLB.
+La caja del modelo se centra horizontalmente. El importador estima el suelo por el área horizontal dominante de la mitad inferior, mueve el modelo para que ese suelo quede en Z=0 y busca cerca del centro un punto de entrada con suelo y espacio libre alrededor. La escala es 100 unidades Unreal por metro GLB.
 
 ## Estado de materiales
 
@@ -40,10 +40,10 @@ La configuración contiene opciones generales de Unreal como MSAA móvil, pero a
 | Triángulos renderizados | 350 000, incluidas caras duplicadas | `GlbRuntime.cpp` |
 | Texturas descomprimidas | 128 MiB por importación | `GlbRuntime.cpp` |
 | Dimensión de imagen de entrada | 4096 px por lado | `GlbRuntime.cpp` |
-| Dimensión tras reducción | cerca de 1024 px por lado | `GlbRuntime.cpp` |
+| Dimensión tras reducción | máximo global de 1024, 512, 256, 128 o 64 px por lado, elegido según la memoria estimada | `GlbRuntime.cpp` |
 | Profundidad de nodos | 128 niveles | `GlbRuntime.cpp` |
 
-La lectura y construcción son sincrónicas en el hilo de juego; un GLB grande puede detener la imagen durante decenas de segundos. En una prueba del dormitorio de 33,5 MB se observaron 67 imágenes, 107,2 MiB decodificados y 133 490 triángulos tras duplicar caras. Prioriza mantener la fluidez de navegación al optimizar esta ruta.
+La lectura y construcción son sincrónicas en el hilo de juego; un GLB grande puede detener la imagen durante decenas de segundos. Una carga del dormitorio mostró 159 variantes de imagen, de las cuales solo 68 se decodificaron antes de agotar los 128 MiB. El importador ahora estima el coste de todas las variantes requeridas y reduce su tamaño de forma uniforme antes de decodificarlas. La corrección requiere comprobarse en el visor. Prioriza mantener la fluidez de navegación al optimizar esta ruta.
 
 ## Persistencia
 

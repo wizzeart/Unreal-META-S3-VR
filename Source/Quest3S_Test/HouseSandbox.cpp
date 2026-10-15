@@ -318,6 +318,7 @@ void AHouseSandboxGameMode::PlaceMenuAtPlayer()
         GetWorldTimerManager().SetTimer(Retry, this, &AHouseSandboxGameMode::PlaceMenuAtPlayer, 0.25f, false);
         return;
     }
+    HideTemplateGeometry();
     ShowPanel(EHousePanel::Library);
     MenuInput = GetWorld()->SpawnActor<AHouseMenuInputActor>();
     MenuInput->Initialize(Pawn);

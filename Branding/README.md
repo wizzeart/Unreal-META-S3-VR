@@ -1,7 +1,13 @@
-# Identidad visual de Casas VR
+# Identidad visual de Matrix VR Show
 
-- `app-icon-source.png`: ilustración generada para el icono de Android; casa arquitectónica abierta con un marco espacial azul sobre fondo oscuro.
-- `cover-source.png`: imagen conceptual generada de un interior contemporáneo, usada para las pantallas de arranque y carga. Es arte promocional, no una captura de una vivienda GLB de la app.
-- `app-icon.png` y `cover.png`: versiones finales reducidas. Los recursos de `Build/Android/res/` derivan de estas imágenes.
+La marca usa un portal arquitectónico en forma de **M**, azul cian y violeta sobre fondo azul noche. Las tres imágenes originales contienen el nombre exacto **MATRIX VR SHOW** y se generaron con la herramienta integrada `imagegen`.
 
-Ambas imágenes se generaron con la herramienta integrada de imagegen. Prompts resumidos: icono de una casa VR arquitectónica, centrado y legible a 48 px, azul nocturno y luz cálida, sin texto; fotografía editorial panorámica de salón contemporáneo, luz natural y un sutil contorno azul en un umbral, sin texto ni personas.
+| Fuente | Uso |
+| --- | --- |
+| `app-icon-source.png` | Emblema cuadrado con logotipo completo. |
+| `cover-source.png` | Portada horizontal del showroom ciberpunk. |
+| `portrait-source.png` | Póster vertical para el arranque en Android. |
+
+`app-icon.png`, `app-mark.png`, `cover.png` y `portrait.png` son variantes finales. Los iconos pequeños de Android usan `app-mark.png` para conservar la legibilidad; sus pantallas de carga muestran el nombre completo. `Tools/cmd/generar-recursos-matrix.ps1` regenera los tamaños de `Build/Android/res/` con `ffmpeg`.
+
+Prompts originales: (1) icono cuadrado con portal arquitectónico M, cian y violeta, texto exacto «MATRIX / VR SHOW»; (2) showroom ciberpunk panorámico con portal M y texto exacto «MATRIX VR SHOW»; (3) póster vertical del portal M con el mismo nombre en dos líneas. Sin personajes, marcas ajenas ni imágenes de películas.

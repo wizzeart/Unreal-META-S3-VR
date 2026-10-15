@@ -21,7 +21,14 @@ class UMaterialInterface;
 class UInputMappingContext;
 class ADirectionalLight;
 
-enum class EHousePanel : uint8 { Closed, Library, Visual };
+enum class EHousePanel : uint8 { Closed, Library, Visual, Notes };
+
+struct FHouseNote
+{
+    FString Text;
+    FVector Location = FVector::ZeroVector;
+    FRotator Rotation = FRotator::ZeroRotator;
+};
 
 struct FHouseVisualSettings
 {
@@ -54,7 +61,7 @@ private:
     float TurnInput = 0.f;
     float ScrollInput = 0.f;
     bool bXHeld = false, bYHeld = false, bAHeld = false, bBHeld = false;
-    bool bVisualChordFired = false, bReturnChordFired = false, bXUsedForChord = false;
+    bool bVisualChordFired = false, bReturnChordFired = false, bXUsedForChord = false, bBUsedForChord = false;
     float XDownTime = 0.f, YDownTime = 0.f, ADownTime = 0.f, BDownTime = 0.f;
     void TriggerDown();
     void TriggerUp();
@@ -125,6 +132,19 @@ public:
     EHousePanel GetActivePanel() const { return ActivePanel; }
     void ShowPanel(EHousePanel Panel);
     void ReturnToLibrary();
+    void ToggleSun();
+    void ToggleGhost();
+    bool IsGhost() const { return bGhost; }
+    bool IsSunOn() const { return bSunOn; }
+    void StartNewNote();
+    void EditNote(int32 Index);
+    void SetNoteText(const FString& Text);
+    void DeleteNote();
+    void SaveGame(const FString& Slot);
+    void LoadGame(const FString& Slot);
+    TArray<FString> GetSaveSlots() const;
+    int32 GetEditingNote() const { return EditingNote; }
+    FString GetEditingText() const;
     void ChangeVisualControl(int32 Feature);
     void ScrollPanel(float Amount);
     const FHouseVisualSettings& GetVisualSettings() const { return VisualSettings; }
@@ -150,7 +170,15 @@ private:
     EHousePanel ActivePanel = EHousePanel::Library;
     int32 RequestGeneration = 0;
     FString LastError;
+    FString CurrentHouseFile;
+    TArray<FHouseNote> Notes;
+    UPROPERTY() TArray<TObjectPtr<AActor>> NoteActors;
+    bool bGhost = false;
+    bool bSunOn = true;
+    int32 EditingNote = INDEX_NONE;
     void SetError(const FString& Message);
+    void RebuildNotes();
+    void ClearNotes();
     void PlaceMenuAtPlayer();
     void HideTemplateGeometry();
     void ApplyVisualSettings(bool bSave = true);
@@ -167,8 +195,12 @@ public:
     void Populate(AHouseSandboxGameMode* Owner);
     void OpenFile(const FString& FileName);
     void OpenRemote(const FString& Url);
+    void OpenSave(const FString& SaveName);
+    void OpenNote(int32 Index);
+    void TypeNoteCharacter(const FString& Character);
     void SetRemoteModels(const TArray<TPair<FString, FString>>& Models);
     void SetVisualMode(bool bVisual);
+    void SetNotesMode(bool bNotes);
     void UpdateVisualLabels();
     void ActivateVisualControl(int32 Feature);
     void ScrollBy(float Amount);
@@ -180,6 +212,12 @@ private:
     UPROPERTY() TObjectPtr<UVerticalBox> RemoteList;
     UPROPERTY() TObjectPtr<UVerticalBox> LibraryPanel;
     UPROPERTY() TObjectPtr<UVerticalBox> VisualPanel;
+    UPROPERTY() TObjectPtr<UVerticalBox> NotesPanel;
+    UPROPERTY() TObjectPtr<UVerticalBox> SaveList;
+    UPROPERTY() TObjectPtr<UTextBlock> GhostLabel;
+    UPROPERTY() TObjectPtr<UTextBlock> SunLabel;
+    UPROPERTY() TObjectPtr<UTextBlock> NoteText;
+    UPROPERTY() TObjectPtr<UEditableTextBox> SlotBox;
     UPROPERTY() TObjectPtr<UScrollBox> ContentScroll;
     UPROPERTY() TArray<TObjectPtr<UTextBlock>> VisualLabels;
     UPROPERTY() TArray<TObjectPtr<UHouseVisualButton>> VisualButtons;
@@ -196,4 +234,36 @@ private:
     UFUNCTION() void OnShowLibrary();
     UFUNCTION() void OnShowVisual();
     UFUNCTION() void OnRecenter();
+    UFUNCTION() void OnNewNote();
+    UFUNCTION() void OnSave();
+    UFUNCTION() void OnDeleteNote();
+    UFUNCTION() void OnToggleGhost();
+    UFUNCTION() void OnToggleSun();
+    void RefreshNoteEditor();
+};
+
+UCLASS()
+class QUEST3S_TEST_API UHouseActionButton : public UButton
+{
+    GENERATED_BODY()
+public:
+    FString Value;
+    int32 Index = INDEX_NONE;
+    UPROPERTY() TObjectPtr<UHouseSandboxWidget> ParentMenu;
+    UFUNCTION() void Activate();
+};
+
+UCLASS()
+class QUEST3S_TEST_API UHouseNoteWidget : public UUserWidget
+{
+    GENERATED_BODY()
+public:
+    UPROPERTY() TObjectPtr<UHouseSandboxWidget> ParentMenu;
+    int32 NoteIndex = INDEX_NONE;
+    FString NoteContent;
+    virtual bool Initialize() override;
+    void Refresh();
+private:
+    UPROPERTY() TObjectPtr<UHouseActionButton> NoteButton;
+    UPROPERTY() TObjectPtr<UTextBlock> Label;
 };

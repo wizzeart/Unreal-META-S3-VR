@@ -35,6 +35,7 @@
 #include "Engine/DirectionalLight.h"
 #include "Components/HorizontalBox.h"
 #include "Components/Spacer.h"
+#include "Components/CanvasPanel.h"
 #include "Serialization/JsonWriter.h"
 #include "EngineUtils.h"
 #include "Components/InputComponent.h"
@@ -183,21 +184,25 @@ void AHouseMenuInputActor::Tick(float DeltaSeconds)
             return;
         }
     }
+    AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this));
+    const bool bGhost = Sandbox && Sandbox->IsGhost();
     const FVector2D Stick(DeadZone(RightInput), DeadZone(ForwardInput));
     if (!Stick.IsNearlyZero())
     {
         const FRotator Yaw(0.f, PlayerCamera->GetComponentRotation().Yaw, 0.f);
         const FVector Direction = (Yaw.Vector() * Stick.Y + FRotationMatrix(Yaw).GetUnitAxis(EAxis::Y) * Stick.X).GetClampedToMaxSize(1.f);
-        const FVector Delta = Direction * 420.f * Step;
+        const FVector Delta = (Direction + FVector::UpVector * (bGhost ? DeadZone(ScrollInput) : 0.f)).GetClampedToMaxSize(1.f) * 420.f * Step;
         const FVector PawnLocation = ControlledPawn->GetActorLocation();
         const FVector HeadLocation = PlayerCamera->GetComponentLocation();
         const FVector Start(HeadLocation.X, HeadLocation.Y, PawnLocation.Z + 92.f);
         FHitResult Hit;
         FCollisionQueryParams Params(SCENE_QUERY_STAT(HouseWalk), false, ControlledPawn);
-        const bool bBlocked = GetWorld()->SweepSingleByChannel(Hit, Start, Start + Delta, FQuat::Identity, ECC_Pawn,
+        const bool bBlocked = !bGhost && GetWorld()->SweepSingleByChannel(Hit, Start, Start + Delta, FQuat::Identity, ECC_Pawn,
             FCollisionShape::MakeCapsule(22.f, 85.f), Params);
         ControlledPawn->SetActorLocation(PawnLocation + Delta * (bBlocked ? FMath::Max(0.f, Hit.Time - 0.02f) : 1.f));
     }
+    else if (bGhost && !FMath::IsNearlyZero(DeadZone(ScrollInput)))
+        ControlledPawn->AddActorWorldOffset(FVector::UpVector * DeadZone(ScrollInput) * 420.f * Step);
     const float Turn = DeadZone(TurnInput);
     if (!FMath::IsNearlyZero(Turn))
     {
@@ -252,11 +257,23 @@ void AHouseMenuInputActor::XUp()
     if (!bYHeld) bVisualChordFired = false;
 }
 void AHouseMenuInputActor::YDown() { bYHeld = true; YDownTime = GetWorld()->GetTimeSeconds(); if (bXHeld) bXUsedForChord = true; UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR Y pressed")); }
-void AHouseMenuInputActor::YUp() { bYHeld = false; if (!bXHeld) bVisualChordFired = false; }
-void AHouseMenuInputActor::ADown() { bAHeld = true; ADownTime = GetWorld()->GetTimeSeconds(); UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR A pressed")); }
-void AHouseMenuInputActor::AUp() { bAHeld = false; if (!bBHeld) bReturnChordFired = false; }
-void AHouseMenuInputActor::BDown() { bBHeld = true; BDownTime = GetWorld()->GetTimeSeconds(); UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR B pressed")); }
-void AHouseMenuInputActor::BUp() { bBHeld = false; if (!bAHeld) bReturnChordFired = false; }
+void AHouseMenuInputActor::YUp()
+{
+    if (!bXHeld && !bVisualChordFired && GetWorld()->GetTimeSeconds() - YDownTime < 0.6f)
+        if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this))) Sandbox->ToggleSun();
+    bYHeld = false;
+    if (!bXHeld) bVisualChordFired = false;
+}
+void AHouseMenuInputActor::ADown() { bAHeld = true; ADownTime = GetWorld()->GetTimeSeconds(); if (bBHeld) bBUsedForChord = true; UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR A pressed")); }
+void AHouseMenuInputActor::AUp() { bAHeld = false; if (!bBHeld) { bReturnChordFired = false; bBUsedForChord = false; } }
+void AHouseMenuInputActor::BDown() { bBHeld = true; BDownTime = GetWorld()->GetTimeSeconds(); if (bAHeld) bBUsedForChord = true; UE_LOG(LogTemp, Display, TEXT("HouseSandbox: XR B pressed")); }
+void AHouseMenuInputActor::BUp()
+{
+    if (!bAHeld && !bReturnChordFired && !bBUsedForChord && GetWorld()->GetTimeSeconds() - BDownTime < 0.6f)
+        if (AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this))) Sandbox->ToggleGhost();
+    bBHeld = false;
+    if (!bAHeld) { bReturnChordFired = false; bBUsedForChord = false; }
+}
 
 void AHouseSandboxGameMode::BeginPlay()
 {
@@ -352,7 +369,11 @@ void AHouseSandboxGameMode::ShowPanel(EHousePanel Panel)
     if (!MenuComponent || !MenuActor) return;
     MenuComponent->SetVisibility(Panel != EHousePanel::Closed);
     if (Panel == EHousePanel::Closed) return;
-    if (MenuWidget) MenuWidget->SetVisualMode(Panel == EHousePanel::Visual);
+    if (MenuWidget)
+    {
+        MenuWidget->SetVisualMode(Panel == EHousePanel::Visual);
+        MenuWidget->SetNotesMode(Panel == EHousePanel::Notes);
+    }
     APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
     UCameraComponent* Camera = Pawn ? Pawn->FindComponentByClass<UCameraComponent>() : nullptr;
     if (!Camera) return;
@@ -364,6 +385,8 @@ void AHouseSandboxGameMode::ShowPanel(EHousePanel Panel)
 void AHouseSandboxGameMode::ReturnToLibrary()
 {
     ++RequestGeneration;
+    ClearNotes();
+    CurrentHouseFile.Empty();
     if (HouseActor) HouseActor->Destroy();
     HouseActor = nullptr;
     HouseMesh = nullptr;
@@ -436,13 +459,13 @@ void AHouseSandboxGameMode::ApplyVisualSettings(bool bSave)
     {
         ULightComponent* Sun = SceneSun->GetLightComponent();
         Sun->SetCastShadows(VisualSettings.bShadows);
-        Sun->SetVisibility(bLightScene);
+        Sun->SetVisibility(bLightScene && bSunOn);
     }
     if (MenuWidget) MenuWidget->UpdateVisualLabels();
     if (bSave) SaveVisualSettings();
-    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: visual lit=%d normal=%d ao=%d metalrough=%d emissive=%d fill=%d shadows=%d"),
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: visual lit=%d normal=%d ao=%d metalrough=%d emissive=%d fill=%d shadows=%d sun=%d"),
         VisualSettings.bLit, VisualSettings.bNormal, VisualSettings.bOcclusion, VisualSettings.bMetalRough,
-        VisualSettings.bEmissive, VisualSettings.bFillLight, VisualSettings.bShadows);
+        VisualSettings.bEmissive, VisualSettings.bFillLight, VisualSettings.bShadows, bSunOn);
 }
 
 void AHouseSandboxGameMode::ChangeVisualControl(int32 Feature)
@@ -466,6 +489,8 @@ void AHouseSandboxGameMode::ChangeVisualControl(int32 Feature)
     case 200: ReturnToLibrary(); return;
     case 201: ShowPanel(EHousePanel::Library); return;
     case 202: ShowPanel(EHousePanel::Closed); return;
+    case 203: ToggleSun(); return;
+    case 204: ToggleGhost(); return;
     default: return;
     }
     ApplyVisualSettings();
@@ -724,7 +749,9 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: spawn X=%.0f Y=%.0f clear_floor=%d openness=%.0f"),
         SpawnPosition.X, SpawnPosition.Y, bFoundClearFloor, bFoundClearFloor ? BestSpawnScore : 0.f);
     if (HouseActor) HouseActor->Destroy();
+    ClearNotes();
     HouseActor = NewActor;
+    CurrentHouseFile = FileName;
     HouseMesh = NewMesh;
     LitMaterials.Reset();
     ReferenceMaterials.Reset();
@@ -742,6 +769,223 @@ bool AHouseSandboxGameMode::LoadHouse(const FString& FileName)
     return true;
 }
 
+void AHouseSandboxGameMode::ToggleSun()
+{
+    bSunOn = !bSunOn;
+    ApplyVisualSettings(false);
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: sun %d"), bSunOn);
+}
+
+void AHouseSandboxGameMode::ToggleGhost()
+{
+    if (bGhost)
+    {
+        APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
+        UCameraComponent* Camera = Pawn ? Pawn->FindComponentByClass<UCameraComponent>() : nullptr;
+        if (Pawn && Camera)
+        {
+            const FVector P = Pawn->GetActorLocation();
+            const FVector H = Camera->GetComponentLocation();
+            FCollisionQueryParams Params(SCENE_QUERY_STAT(HouseGhostExit), false, Pawn);
+            if (GetWorld()->OverlapBlockingTestByChannel(FVector(H.X, H.Y, P.Z + 92.f), FQuat::Identity,
+                ECC_Pawn, FCollisionShape::MakeCapsule(22.f, 85.f), Params))
+            {
+                SetError(TEXT("Sal de la pared antes de desactivar vuelo"));
+                return;
+            }
+        }
+    }
+    bGhost = !bGhost;
+    SetError(bGhost ? TEXT("Vuelo fantasma: palanca derecha arriba/abajo") : TEXT("Colisiones activas"));
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: ghost %d"), bGhost);
+}
+
+void AHouseSandboxGameMode::ClearNotes()
+{
+    for (AActor* Actor : NoteActors) if (Actor) Actor->Destroy();
+    NoteActors.Empty();
+    Notes.Empty();
+    EditingNote = INDEX_NONE;
+}
+
+void AHouseSandboxGameMode::RebuildNotes()
+{
+    for (AActor* Actor : NoteActors) if (Actor) Actor->Destroy();
+    NoteActors.Empty();
+    for (int32 Index = 0; Index < Notes.Num(); ++Index)
+    {
+        AActor* Actor = GetWorld()->SpawnActor<AActor>(Notes[Index].Location, Notes[Index].Rotation);
+        if (!Actor) continue;
+        UWidgetComponent* Widget = NewObject<UWidgetComponent>(Actor);
+        Actor->SetRootComponent(Widget);
+        Widget->SetWidgetSpace(EWidgetSpace::World);
+        Widget->SetDrawSize(FVector2D(500, 240));
+        Widget->SetWorldScale3D(FVector(0.08f));
+        Widget->SetTwoSided(true);
+        Widget->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+        Widget->SetCollisionResponseToAllChannels(ECR_Ignore);
+        Widget->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+        Widget->RegisterComponent();
+        Actor->SetActorLocationAndRotation(Notes[Index].Location, Notes[Index].Rotation);
+        UHouseNoteWidget* View = CreateWidget<UHouseNoteWidget>(GetWorld(), UHouseNoteWidget::StaticClass());
+        if (View)
+        {
+            View->ParentMenu = MenuWidget;
+            View->NoteIndex = Index;
+            View->NoteContent = Notes[Index].Text;
+            View->Refresh();
+            Widget->SetWidget(View);
+        }
+        NoteActors.Add(Actor);
+    }
+}
+
+void AHouseSandboxGameMode::StartNewNote()
+{
+    if (!HouseMesh) { SetError(TEXT("Carga una casa antes de crear notas")); return; }
+    if (Notes.Num() >= 100) { SetError(TEXT("Limite de 100 notas por partida")); return; }
+    APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    UCameraComponent* Camera = Pawn ? Pawn->FindComponentByClass<UCameraComponent>() : nullptr;
+    if (!Camera) return;
+    const FVector Start = Camera->GetComponentLocation();
+    const FVector End = Start + Camera->GetForwardVector() * 600.f;
+    FHitResult Hit;
+    const FCollisionQueryParams Params(SCENE_QUERY_STAT(HouseNote), true);
+    if (!HouseMesh->LineTraceComponent(Hit, Start, End, Params))
+    {
+        SetError(TEXT("Mira una superficie de la casa a menos de 6 m"));
+        return;
+    }
+    FHouseNote Note;
+    Note.Text = TEXT("");
+    Note.Location = Hit.ImpactPoint + Hit.ImpactNormal * 8.f;
+    Note.Rotation = (Start - Note.Location).Rotation();
+    Notes.Add(Note);
+    EditingNote = Notes.Num() - 1;
+    RebuildNotes();
+    ShowPanel(EHousePanel::Notes);
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: note added index=%d"), EditingNote);
+}
+
+void AHouseSandboxGameMode::EditNote(int32 Index)
+{
+    if (!Notes.IsValidIndex(Index)) return;
+    EditingNote = Index;
+    ShowPanel(EHousePanel::Notes);
+}
+
+FString AHouseSandboxGameMode::GetEditingText() const
+{
+    return Notes.IsValidIndex(EditingNote) ? Notes[EditingNote].Text : FString();
+}
+
+void AHouseSandboxGameMode::SetNoteText(const FString& Text)
+{
+    if (!Notes.IsValidIndex(EditingNote)) return;
+    Notes[EditingNote].Text = Text.Left(300);
+    RebuildNotes();
+}
+
+void AHouseSandboxGameMode::DeleteNote()
+{
+    if (!Notes.IsValidIndex(EditingNote)) return;
+    Notes.RemoveAt(EditingNote);
+    EditingNote = INDEX_NONE;
+    RebuildNotes();
+    ShowPanel(EHousePanel::Closed);
+}
+
+TArray<FString> AHouseSandboxGameMode::GetSaveSlots() const
+{
+    TArray<FString> Slots;
+    IFileManager::Get().FindFiles(Slots, *FPaths::Combine(GetModelDirectory(), TEXT("Saves"), TEXT("*.json")), true, false);
+    for (FString& Slot : Slots) Slot = FPaths::GetBaseFilename(Slot);
+    Slots.Sort();
+    return Slots;
+}
+
+void AHouseSandboxGameMode::SaveGame(const FString& Slot)
+{
+    if (CurrentHouseFile.IsEmpty()) { SetError(TEXT("Carga una casa antes de guardar")); return; }
+    bool bValidSlot = !Slot.IsEmpty() && Slot.Len() <= 40;
+    for (TCHAR C : Slot) bValidSlot &= FChar::IsAlnum(C) || C == TEXT('_');
+    if (!bValidSlot)
+    { SetError(TEXT("Nombre de partida: letras, numeros o _ (maximo 40)")); return; }
+    APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!Pawn) return;
+    TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+    Json->SetNumberField(TEXT("version"), 1);
+    Json->SetStringField(TEXT("model"), CurrentHouseFile);
+    const FVector P = Pawn->GetActorLocation();
+    Json->SetNumberField(TEXT("x"), P.X); Json->SetNumberField(TEXT("y"), P.Y); Json->SetNumberField(TEXT("z"), P.Z);
+    Json->SetNumberField(TEXT("yaw"), Pawn->GetActorRotation().Yaw);
+    TArray<TSharedPtr<FJsonValue>> SavedNotes;
+    for (const FHouseNote& Note : Notes)
+    {
+        TSharedRef<FJsonObject> N = MakeShared<FJsonObject>();
+        N->SetStringField(TEXT("text"), Note.Text);
+        N->SetNumberField(TEXT("x"), Note.Location.X); N->SetNumberField(TEXT("y"), Note.Location.Y); N->SetNumberField(TEXT("z"), Note.Location.Z);
+        N->SetNumberField(TEXT("pitch"), Note.Rotation.Pitch); N->SetNumberField(TEXT("yaw"), Note.Rotation.Yaw);
+        SavedNotes.Add(MakeShared<FJsonValueObject>(N));
+    }
+    Json->SetArrayField(TEXT("notes"), SavedNotes);
+    FString Contents;
+    if (!FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Contents))) return;
+    const FString Dir = FPaths::Combine(GetModelDirectory(), TEXT("Saves"));
+    IFileManager::Get().MakeDirectory(*Dir, true);
+    const FString Target = FPaths::Combine(Dir, Slot + TEXT(".json"));
+    const FString Temporary = Target + TEXT(".tmp");
+    if (!FFileHelper::SaveStringToFile(Contents, *Temporary) || !IFileManager::Get().Move(*Target, *Temporary, true))
+    { SetError(TEXT("No se pudo guardar la partida")); return; }
+    SetError(TEXT("Partida guardada: ") + Slot);
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: game saved slot=%s notes=%d"), *Slot, Notes.Num());
+}
+
+void AHouseSandboxGameMode::LoadGame(const FString& Slot)
+{
+    if (!GetSaveSlots().Contains(Slot)) { SetError(TEXT("Partida no encontrada")); return; }
+    FString Contents;
+    if (!FFileHelper::LoadFileToString(Contents, *FPaths::Combine(GetModelDirectory(), TEXT("Saves"), Slot + TEXT(".json")))) return;
+    TSharedPtr<FJsonObject> Json;
+    double Version = 0;
+    if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Contents), Json) || !Json.IsValid()
+        || !Json->TryGetNumberField(TEXT("version"), Version) || Version != 1)
+    { SetError(TEXT("Partida incompatible")); return; }
+    FString Model;
+    if (!Json->TryGetStringField(TEXT("model"), Model) || !LoadHouse(Model)) return;
+    APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (Pawn)
+    {
+        double X = 0, Y = 0, Z = 0, Yaw = 0;
+        Json->TryGetNumberField(TEXT("x"), X); Json->TryGetNumberField(TEXT("y"), Y);
+        Json->TryGetNumberField(TEXT("z"), Z); Json->TryGetNumberField(TEXT("yaw"), Yaw);
+        if (FMath::IsFinite(X) && FMath::IsFinite(Y) && FMath::IsFinite(Z) && FMath::Max3(FMath::Abs(X), FMath::Abs(Y), FMath::Abs(Z)) < 100000.f)
+        { Pawn->SetActorLocation(FVector(X, Y, Z)); Pawn->SetActorRotation(FRotator(0, Yaw, 0)); }
+    }
+    const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+    if (Json->TryGetArrayField(TEXT("notes"), Values))
+    {
+        for (const TSharedPtr<FJsonValue>& Value : *Values)
+        {
+            const TSharedPtr<FJsonObject> N = Value.IsValid() ? Value->AsObject() : nullptr;
+            if (!N.IsValid() || Notes.Num() >= 100) continue;
+            FHouseNote Note;
+            double X = 0, Y = 0, Z = 0, Pitch = 0, Yaw = 0;
+            N->TryGetStringField(TEXT("text"), Note.Text);
+            N->TryGetNumberField(TEXT("x"), X); N->TryGetNumberField(TEXT("y"), Y); N->TryGetNumberField(TEXT("z"), Z);
+            N->TryGetNumberField(TEXT("pitch"), Pitch); N->TryGetNumberField(TEXT("yaw"), Yaw);
+            if (!FMath::IsFinite(X) || !FMath::IsFinite(Y) || !FMath::IsFinite(Z)) continue;
+            Note.Location = FVector(X, Y, Z); Note.Rotation = FRotator(Pitch, Yaw, 0);
+            Note.Text = Note.Text.Left(300);
+            Notes.Add(Note);
+        }
+    }
+    RebuildNotes();
+    SetError(TEXT("Partida cargada: ") + Slot);
+    ShowPanel(EHousePanel::Closed);
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: game loaded slot=%s notes=%d"), *Slot, Notes.Num());
+}
+
 void UHouseFileButton::ActivateFile()
 {
     if (ParentMenu) ParentMenu->OpenFile(FileName);
@@ -755,6 +999,38 @@ void UHouseRemoteButton::ActivateRemote()
 void UHouseVisualButton::ActivateVisual()
 {
     if (ParentMenu) ParentMenu->ActivateVisualControl(Feature);
+}
+
+void UHouseActionButton::Activate()
+{
+    if (!ParentMenu) return;
+    if (Value == TEXT("save")) ParentMenu->OpenSave(TEXT("@save"));
+    else if (Value == TEXT("delete")) ParentMenu->TypeNoteCharacter(TEXT("@delete"));
+    else if (Value == TEXT("note")) ParentMenu->OpenNote(Index);
+    else if (Value.StartsWith(TEXT("slot:"))) ParentMenu->OpenSave(Value.Mid(5));
+    else ParentMenu->TypeNoteCharacter(Value);
+}
+
+bool UHouseNoteWidget::Initialize()
+{
+    if (!Super::Initialize()) return false;
+    NoteButton = WidgetTree->ConstructWidget<UHouseActionButton>();
+    NoteButton->Value = TEXT("note");
+    NoteButton->SetBackgroundColor(FLinearColor(0.88f, 0.81f, 0.48f, 0.96f));
+    Label = WidgetTree->ConstructWidget<UTextBlock>();
+    FSlateFontInfo Font = Label->GetFont(); Font.Size = 30; Label->SetFont(Font);
+    Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+    Label->SetAutoWrapText(true);
+    NoteButton->AddChild(Label);
+    NoteButton->OnClicked.AddDynamic(NoteButton, &UHouseActionButton::Activate);
+    WidgetTree->RootWidget = NoteButton;
+    return true;
+}
+
+void UHouseNoteWidget::Refresh()
+{
+    if (NoteButton) { NoteButton->ParentMenu = ParentMenu; NoteButton->Index = NoteIndex; }
+    if (Label) Label->SetText(FText::FromString(NoteContent.IsEmpty() ? TEXT("(nota vacia)") : NoteContent));
 }
 
 bool UHouseSandboxWidget::Initialize()
@@ -814,6 +1090,9 @@ bool UHouseSandboxWidget::Initialize()
     VisualPanel = WidgetTree->ConstructWidget<UVerticalBox>();
     ContentScroll->AddChild(VisualPanel);
     VisualPanel->SetVisibility(ESlateVisibility::Collapsed);
+    NotesPanel = WidgetTree->ConstructWidget<UVerticalBox>();
+    ContentScroll->AddChild(NotesPanel);
+    NotesPanel->SetVisibility(ESlateVisibility::Collapsed);
     AddText(LibraryPanel, TEXT("HUB DE LA LAPTOP"), 30);
     HubBox = WidgetTree->ConstructWidget<UEditableTextBox>();
     HubBox->SetText(FText::FromString(TEXT("http://127.0.0.1:8765")));
@@ -836,6 +1115,23 @@ bool UHouseSandboxWidget::Initialize()
     LibraryPanel->AddChildToVerticalBox(UrlBox);
     UButton* Download = AddButton(LibraryPanel, TEXT("DESCARGAR Y ABRIR"), TEXT("DownloadDirect"));
     Download->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnDownload);
+    AddText(LibraryPanel, TEXT("PARTIDAS GUARDADAS"), 30);
+    SlotBox = WidgetTree->ConstructWidget<UEditableTextBox>();
+    SlotBox->SetText(FText::FromString(TEXT("partida_1")));
+    SlotBox->SetHintText(FText::FromString(TEXT("Nombre de partida")));
+    LibraryPanel->AddChildToVerticalBox(SlotBox);
+    UButton* Save = AddButton(LibraryPanel, TEXT("GUARDAR PARTIDA ACTUAL"), TEXT("SaveGame"));
+    Save->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnSave);
+    SaveList = WidgetTree->ConstructWidget<UVerticalBox>();
+    LibraryPanel->AddChildToVerticalBox(SaveList);
+    UButton* NewNote = AddButton(LibraryPanel, TEXT("CREAR NOTA EN LA SUPERFICIE QUE MIRO"), TEXT("NewNote"));
+    NewNote->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnNewNote);
+    UButton* Ghost = AddButton(LibraryPanel, TEXT("VUELO FANTASMA"), TEXT("Ghost"));
+    Ghost->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnToggleGhost);
+    GhostLabel = Cast<UTextBlock>(Ghost->GetContent());
+    UButton* Sun = AddButton(LibraryPanel, TEXT("LUZ SOL"), TEXT("Sun"));
+    Sun->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnToggleSun);
+    SunLabel = Cast<UTextBlock>(Sun->GetContent());
     AddText(VisualPanel, TEXT("PERFILES"), 32);
     auto VisualButton = [&](int32 Feature, const FString& Label) -> UTextBlock*
     {
@@ -863,8 +1159,46 @@ bool UHouseSandboxWidget::Initialize()
     VisualButton(4, TEXT("Emisión"));
     VisualButton(5, TEXT("Luz de relleno"));
     VisualButton(6, TEXT("Sombras direccionales (experimental)"));
+    VisualButton(203, TEXT("ENCENDER / APAGAR SOL  ·  Y CORTO"));
+    VisualButton(204, TEXT("VUELO FANTASMA  ·  B CORTO  ·  PALANCA DERECHA VERTICAL"));
     VisualButton(200, TEXT("VOLVER A MODELOS Y LIBERAR CASA"));
     VisualButton(201, TEXT("ABRIR BIBLIOTECA"));
+    AddText(NotesPanel, TEXT("EDITAR NOTA"), 34);
+    NoteText = AddText(NotesPanel, TEXT(""), 30);
+    const TCHAR* Rows[] = { TEXT("ABCDEFGHIJ"), TEXT("KLMNOPQRST"), TEXT("UVWXYZ0123"), TEXT("456789.,!?"), TEXT("-_:;/()") };
+    for (const TCHAR* Row : Rows)
+    {
+        UHorizontalBox* Keys = WidgetTree->ConstructWidget<UHorizontalBox>();
+        NotesPanel->AddChildToVerticalBox(Keys);
+        for (const TCHAR* Key = Row; *Key; ++Key)
+        {
+            UHouseActionButton* Button = WidgetTree->ConstructWidget<UHouseActionButton>();
+            Button->Value = FString::Chr(*Key);
+            Button->ParentMenu = this;
+            UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
+            Label->SetText(FText::FromString(Button->Value));
+            FSlateFontInfo Font = Label->GetFont(); Font.Size = 31; Label->SetFont(Font);
+            Button->AddChild(Label);
+            Button->OnClicked.AddDynamic(Button, &UHouseActionButton::Activate);
+            Keys->AddChildToHorizontalBox(Button);
+        }
+    }
+    auto NoteKey = [&](const FString& Label, const FString& Value)
+    {
+        UHouseActionButton* Button = WidgetTree->ConstructWidget<UHouseActionButton>();
+        Button->Value = Value; Button->ParentMenu = this;
+        UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
+        Text->SetText(FText::FromString(Label));
+        Button->AddChild(Text);
+        Button->OnClicked.AddDynamic(Button, &UHouseActionButton::Activate);
+        NotesPanel->AddChildToVerticalBox(Button);
+    };
+    NoteKey(TEXT("ESPACIO"), TEXT(" "));
+    NoteKey(TEXT("BORRAR ULTIMO CARACTER"), TEXT("@backspace"));
+    UButton* Delete = AddButton(NotesPanel, TEXT("ELIMINAR NOTA"), TEXT("DeleteNote"));
+    Delete->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnDeleteNote);
+    UButton* Done = AddButton(NotesPanel, TEXT("LISTO"), TEXT("DoneNote"));
+    Done->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnClose);
     UButton* Recenter = AddButton(Frame, TEXT("RECOLOCAR PANEL DELANTE DE MÍ"), TEXT("RecenterPanel"));
     Recenter->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnRecenter);
     UButton* Close = AddButton(Frame, TEXT("CERRAR  ·  X PARA ABRIR  ·  X+Y VISUALES  ·  A+B MODELOS"), TEXT("ClosePanel"));
@@ -899,6 +1233,23 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
         Button->OnClicked.AddDynamic(Button, &UHouseFileButton::ActivateFile);
         if (UVerticalBoxSlot* MenuSlot = FileList->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
     }
+    if (SaveList)
+    {
+        SaveList->ClearChildren();
+        for (const FString& SaveName : Sandbox->GetSaveSlots())
+        {
+            UHouseActionButton* Button = WidgetTree->ConstructWidget<UHouseActionButton>();
+            Button->ParentMenu = this; Button->Value = TEXT("slot:") + SaveName;
+            UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
+            Label->SetText(FText::FromString(TEXT("CARGAR: ") + SaveName));
+            FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
+            Button->AddChild(Label);
+            Button->OnClicked.AddDynamic(Button, &UHouseActionButton::Activate);
+            SaveList->AddChildToVerticalBox(Button);
+        }
+    }
+    if (GhostLabel) GhostLabel->SetText(FText::FromString(Sandbox->IsGhost() ? TEXT("VUELO FANTASMA: ACTIVO") : TEXT("VUELO FANTASMA: APAGADO")));
+    if (SunLabel) SunLabel->SetText(FText::FromString(Sandbox->IsSunOn() ? TEXT("LUZ SOL: ACTIVA") : TEXT("LUZ SOL: APAGADA")));
     if (ContentScroll) ContentScroll->SetScrollOffset(PreviousScroll);
     UpdateVisualLabels();
 }
@@ -915,6 +1266,14 @@ void UHouseSandboxWidget::SetVisualMode(bool bVisual)
     if (VisualPanel) VisualPanel->SetVisibility(bVisual ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
     if (ContentScroll) ContentScroll->SetScrollOffset(bVisual ? VisualScrollOffset : LibraryScrollOffset);
     UpdateVisualLabels();
+}
+
+void UHouseSandboxWidget::SetNotesMode(bool bNotes)
+{
+    if (bNotes && LibraryPanel) LibraryPanel->SetVisibility(ESlateVisibility::Collapsed);
+    if (bNotes && VisualPanel) VisualPanel->SetVisibility(ESlateVisibility::Collapsed);
+    if (NotesPanel) NotesPanel->SetVisibility(bNotes ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+    if (bNotes) RefreshNoteEditor();
 }
 
 void UHouseSandboxWidget::ScrollBy(float Amount)
@@ -953,6 +1312,32 @@ void UHouseSandboxWidget::OpenRemote(const FString& Url)
 {
     if (Sandbox) Sandbox->DownloadHouse(Url);
 }
+void UHouseSandboxWidget::OpenSave(const FString& SaveName)
+{
+    if (Sandbox && SaveName != TEXT("@save")) Sandbox->LoadGame(SaveName);
+}
+void UHouseSandboxWidget::OpenNote(int32 Index)
+{
+    if (Sandbox) Sandbox->EditNote(Index);
+}
+void UHouseSandboxWidget::RefreshNoteEditor()
+{
+    if (NoteText && Sandbox) NoteText->SetText(FText::FromString(Sandbox->GetEditingText()));
+}
+void UHouseSandboxWidget::TypeNoteCharacter(const FString& Character)
+{
+    if (!Sandbox) return;
+    FString Text = Sandbox->GetEditingText();
+    if (Character == TEXT("@backspace")) { if (!Text.IsEmpty()) Text.LeftChopInline(1); }
+    else Text += Character;
+    Sandbox->SetNoteText(Text);
+    RefreshNoteEditor();
+}
+void UHouseSandboxWidget::OnNewNote() { if (Sandbox) Sandbox->StartNewNote(); }
+void UHouseSandboxWidget::OnSave() { if (Sandbox && SlotBox) Sandbox->SaveGame(SlotBox->GetText().ToString().TrimStartAndEnd()); }
+void UHouseSandboxWidget::OnDeleteNote() { if (Sandbox) Sandbox->DeleteNote(); }
+void UHouseSandboxWidget::OnToggleGhost() { if (Sandbox) Sandbox->ToggleGhost(); }
+void UHouseSandboxWidget::OnToggleSun() { if (Sandbox) { Sandbox->ToggleSun(); Sandbox->RefreshMenu(); } }
 void UHouseSandboxWidget::SetRemoteModels(const TArray<TPair<FString, FString>>& Models)
 {
     if (!RemoteList) return;

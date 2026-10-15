@@ -1,4 +1,4 @@
-"""Local-network GLB library for the Quest house sandbox. Python 3, no packages."""
+"""Local-network GLB library for Matrix VR Show. Python 3, no packages."""
 from __future__ import annotations
 
 import argparse
@@ -10,13 +10,7 @@ from urllib.parse import quote, unquote, urlsplit
 
 MAX_BYTES = 100 * 1024 * 1024
 NAME = re.compile(r"^[^/\\\x00-\x1f]{1,120}\.glb$", re.IGNORECASE)
-PAGE = """<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Casas VR · Biblioteca local</title><style>
-:root{font-family:system-ui,sans-serif;color:#e8eef8;background:#0c1424}body{max-width:840px;margin:auto;padding:45px 20px}h1{font-size:2.4rem;margin:.3em 0}p{color:#a8b8cd;line-height:1.55}.card{background:#16243a;border:1px solid #35465e;border-radius:18px;padding:24px;margin:24px 0}button,.button{display:inline-block;background:#53dfba;color:#092018;border:0;border-radius:9px;padding:12px 18px;font-weight:700;cursor:pointer;text-decoration:none}input{width:100%;padding:16px;border:1px dashed #6b819d;border-radius:10px;background:#101c2e;color:#fff;box-sizing:border-box}li{display:flex;justify-content:space-between;align-items:center;gap:15px;border-top:1px solid #35465e;padding:14px 0;overflow-wrap:anywhere}small{display:block;color:#9fb0c7}code{color:#9be9d1}#status{min-height:1.3em}</style>
-<body><small>CASAS VR / HUB LOCAL</small><h1>Biblioteca de modelos</h1><p>Sube un archivo GLB exportado desde 3ds Max. La laptop y Quest deben estar en la misma red Wi-Fi.</p>
-<div class="card"><h2>Subir casa</h2><input id="file" type="file" accept=".glb,model/gltf-binary"><p><button id="upload">Guardar en biblioteca</button></p><p id="status"></p></div>
-<div class="card"><h2>Modelos disponibles</h2><ul id="models"></ul></div><p>En Quest, escribe la dirección de esta laptop en el campo HUB y pulsa «VER MODELOS DE LA LAPTOP». Con USB y <code>adb reverse tcp:8765 tcp:8765</code>, usa <code>http://127.0.0.1:8765</code>. Escala: 1 metro GLB = 1 metro VR.</p>
-<script>const $=s=>document.querySelector(s);async function refresh(){const data=await (await fetch('/api/models')).json();$('#models').replaceChildren();for(const m of data){let li=document.createElement('li'),span=document.createElement('span'),a=document.createElement('a');span.textContent=m.name;a.className='button';a.href=m.url;a.textContent='Descargar / copiar enlace';a.onclick=async e=>{e.preventDefault();await navigator.clipboard.writeText(a.href);a.textContent='Enlace copiado';};li.append(span,a);$('#models').append(li);}if(!data.length)$('#models').textContent='Aún no hay modelos.'}$('#upload').onclick=async()=>{const f=$('#file').files[0];if(!f){$('#status').textContent='Selecciona un archivo .glb';return}$('#status').textContent='Subiendo…';try{const r=await fetch('/api/models/'+encodeURIComponent(f.name),{method:'PUT',body:f});if(!r.ok)throw new Error(await r.text());$('#status').textContent='Archivo listo para Quest';await refresh()}catch(e){$('#status').textContent='Error: '+e.message}};refresh()</script></body></html>"""
+PAGE = (Path(__file__).with_name("hub_page.html")).read_text(encoding="utf-8")
 
 
 def valid_glb(data: bytes) -> bool:
@@ -26,6 +20,9 @@ def valid_glb(data: bytes) -> bool:
 
 
 def handler_for(folder: Path):
+    cover = Path(__file__).resolve().parent.parent / "Branding" / "cover.png"
+    icon = Path(__file__).resolve().parent.parent / "Branding" / "app-mark.png"
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             # pythonw has no stderr; keep the server usable as a hidden process.
@@ -43,6 +40,14 @@ def handler_for(folder: Path):
             path = urlsplit(self.path).path
             if path == "/":
                 return self.send(200, PAGE.encode(), "text/html; charset=utf-8")
+            if path == "/brand/cover.png":
+                if not cover.is_file():
+                    return self.send(404, b"Not found", "text/plain")
+                return self.send(200, cover.read_bytes(), "image/png")
+            if path == "/brand/icon.png":
+                if not icon.is_file():
+                    return self.send(404, b"Not found", "text/plain")
+                return self.send(200, icon.read_bytes(), "image/png")
             if path == "/api/models":
                 entries = [{"name": p.name, "url": f"http://{self.headers.get('Host', 'localhost')}/models/{quote(p.name)}"}
                            for p in sorted(folder.glob("*.glb")) if p.is_file()]
@@ -84,5 +89,5 @@ if __name__ == "__main__":
     parser.add_argument("--folder", type=Path, default=Path(__file__).resolve().parent / "models")
     args = parser.parse_args()
     args.folder.mkdir(parents=True, exist_ok=True)
-    print(f"House hub: http://localhost:{args.port} — files: {args.folder}")
+    print(f"Matrix VR Show hub: http://localhost:{args.port} — files: {args.folder}")
     ThreadingHTTPServer((args.host, args.port), handler_for(args.folder)).serve_forever()

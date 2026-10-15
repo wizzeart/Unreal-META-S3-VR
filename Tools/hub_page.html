@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Matrix VR Show · Hub local</title>
+  <link rel="icon" type="image/png" href="/brand/icon.png">
+  <style>
+    :root { color-scheme: dark; --ink:#06101e; --panel:#0b1a2d; --line:#24516b; --cyan:#76efff; --pink:#ff69d3; --text:#eaf7ff; --muted:#94acbf; font-family:"Segoe UI",sans-serif; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--text); background:radial-gradient(circle at 12% 0%,#123756 0%,transparent 36%),linear-gradient(135deg,#06101e,#081526 65%,#170d2c); min-height:100vh; }
+    body::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; opacity:.22; background-image:linear-gradient(#4fd9fa22 1px,transparent 1px),linear-gradient(90deg,#4fd9fa22 1px,transparent 1px); background-size:46px 46px; mask-image:linear-gradient(transparent,#000 55%); }
+    .shell { max-width:1160px; margin:auto; padding:24px 24px 64px; }
+    .top { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:8px 0 24px; border-bottom:1px solid var(--line); }
+    .identity { display:flex; align-items:center; gap:14px; font:800 1.1rem/1 "Bahnschrift Condensed","Arial Narrow",sans-serif; letter-spacing:.16em; text-transform:uppercase; }
+    .mark { width:42px; height:42px; display:grid; place-items:center; color:var(--ink); font:900 2rem/1 "Bahnschrift Condensed","Arial Narrow",sans-serif; background:linear-gradient(135deg,var(--cyan),#55aaff 55%,var(--pink)); clip-path:polygon(0 0,100% 0,100% 100%,73% 100%,73% 35%,50% 62%,27% 35%,27% 100%,0 100%); }
+    .signal, .eyebrow, .index { color:var(--cyan); font:700 .72rem/1.4 Consolas,monospace; letter-spacing:.2em; text-transform:uppercase; }
+    .signal::before { content:"●"; color:#70ffe0; margin-right:9px; }
+    .hero { position:relative; overflow:hidden; min-height:440px; display:flex; align-items:flex-start; margin:24px 0 34px; padding:36px 40px; border:1px solid #3584a7; background:linear-gradient(90deg,#06101ef2 0%,#06101ebb 45%,#06101e33 100%),url('/brand/cover.png') center top/cover; box-shadow:inset 0 0 0 1px #78e7ff20,0 24px 60px #0008; }
+    .hero::before,.hero::after { content:""; position:absolute; width:50px; height:50px; border-color:var(--pink); border-style:solid; }
+    .hero::before { top:14px; left:14px; border-width:2px 0 0 2px; }
+    .hero::after { bottom:14px; right:14px; border-width:0 2px 2px 0; }
+    .hero-copy { position:relative; max-width:620px; }
+    h1,h2 { font-family:"Bahnschrift Condensed","Arial Narrow","Trebuchet MS",sans-serif; text-transform:uppercase; letter-spacing:.06em; }
+    h1 { margin:12px 0; font-size:clamp(3rem,6vw,5.3rem); line-height:.96; text-shadow:0 4px 24px #000; }
+    h1 em { display:block; color:var(--cyan); font-style:normal; }
+    .hero p { color:#d2e2ee; line-height:1.6; max-width:470px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+    .panel { padding:28px; border:1px solid var(--line); background:linear-gradient(145deg,#0d2135ee,#091625f5); box-shadow:inset 0 1px #8defff13; }
+    .panel h2 { margin:7px 0 20px; font-size:2rem; }
+    .panel p { color:var(--muted); line-height:1.6; }
+    input[type=file] { display:block; width:100%; padding:19px; color:var(--text); border:1px dashed #4289a9; background:#07111f; font:inherit; }
+    input[type=file]::file-selector-button { border:0; margin-right:16px; padding:10px 14px; color:var(--ink); background:var(--cyan); font-weight:800; cursor:pointer; }
+    button,.button { border:1px solid var(--cyan); padding:12px 17px; color:var(--ink); background:var(--cyan); font:800 .82rem/1 "Bahnschrift Condensed","Arial Narrow",sans-serif; letter-spacing:.09em; text-transform:uppercase; text-decoration:none; cursor:pointer; transition:transform .15s,box-shadow .15s,background .15s; }
+    button:hover,.button:hover { transform:translateY(-2px); box-shadow:0 0 22px #76efff55; }
+    .outline { color:var(--cyan); background:transparent; }
+    #upload { margin-top:18px; }
+    #status { min-height:1.5em; color:var(--pink); }
+    ul { list-style:none; margin:0; padding:0; }
+    li { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:10px; align-items:center; padding:15px 0; border-top:1px solid #23506b; }
+    li .filename { overflow-wrap:anywhere; font-size:.95rem; }
+    li .filename::before { content:"GLB / "; color:var(--pink); font:700 .7rem Consolas,monospace; }
+    .foot { margin-top:25px; padding:20px 0; border-top:1px solid var(--line); color:var(--muted); line-height:1.6; }
+    code { color:var(--cyan); overflow-wrap:anywhere; }
+    @media (max-width:760px) { .shell{padding:16px 16px 48px}.signal{display:none}.hero{min-height:360px;padding:28px 24px;background-position:60% center}.grid{grid-template-columns:1fr}.panel{padding:22px}li{grid-template-columns:1fr 1fr}li .filename{grid-column:1/-1} }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="top"><div class="identity"><span class="mark" aria-hidden="true"></span><span>Matrix VR Show</span></div><span class="signal">Hub local / 8765</span></header>
+    <section class="hero"><div class="hero-copy"><div class="eyebrow">Biblioteca inmersiva / Quest 3S</div><h1>Explora<br><em>sin límites.</em></h1><p>Envía modelos GLB desde tu computadora y recórrelos dentro del visor. Tus archivos y partidas permanecen en Quest.</p></div></section>
+    <div class="grid">
+      <section class="panel" aria-labelledby="upload-title"><span class="index">01 / Ingesta</span><h2 id="upload-title">Añadir un espacio</h2><p>Selecciona un archivo GLB exportado desde 3ds Max. Tamaño máximo: 100 MB.</p><input id="file" type="file" accept=".glb,model/gltf-binary"><button id="upload" type="button">Guardar en biblioteca</button><p id="status" role="status" aria-live="polite"></p></section>
+      <section class="panel" aria-labelledby="models-title"><span class="index">02 / Archivo</span><h2 id="models-title">Modelos disponibles</h2><ul id="models"></ul></section>
+    </div>
+    <footer class="foot">En Quest, introduce la dirección de esta computadora en HUB y pulsa <strong>VER MODELOS DE LA LAPTOP</strong>. Con USB y <code>adb reverse tcp:8765 tcp:8765</code>, usa <code>http://127.0.0.1:8765</code>. Escala: 1 m GLB = 1 m VR.</footer>
+  </main>
+  <script>
+    const $ = selector => document.querySelector(selector);
+    async function refresh() {
+      try {
+        const response = await fetch('/api/models');
+        if (!response.ok) throw new Error('No se pudo consultar la biblioteca');
+        const models = await response.json();
+        $('#models').replaceChildren();
+        if (!models.length) { $('#models').textContent = 'Aún no hay modelos.'; return; }
+        for (const model of models) {
+          const item = document.createElement('li');
+          const name = document.createElement('span'); name.className = 'filename'; name.textContent = model.name;
+          const download = document.createElement('a'); download.className = 'button outline'; download.href = model.url; download.download = model.name; download.textContent = 'Descargar';
+          const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copiar enlace';
+          copy.onclick = async () => { try { await navigator.clipboard.writeText(model.url); copy.textContent = 'Copiado'; } catch { copy.textContent = 'Usa Descargar'; } };
+          item.append(name, download, copy); $('#models').append(item);
+        }
+      } catch (error) { $('#models').textContent = error.message; }
+    }
+    $('#upload').onclick = async () => {
+      const file = $('#file').files[0];
+      if (!file) { $('#status').textContent = 'Selecciona un archivo .glb'; return; }
+      $('#status').textContent = 'Subiendo…';
+      try {
+        const response = await fetch('/api/models/' + encodeURIComponent(file.name), { method:'PUT', body:file });
+        if (!response.ok) throw new Error(await response.text());
+        $('#status').textContent = 'Archivo listo para Quest';
+        await refresh();
+      } catch (error) { $('#status').textContent = 'Error: ' + error.message; }
+    };
+    refresh();
+  </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-# Casas VR para Meta Quest 3S
+# Matrix VR Show para Meta Quest 3S
 
 Proyecto Unreal Engine 5.8 para cargar viviendas GLB desde una biblioteca web local o desde el selector de archivos de Quest y recorrerlas en primera persona. La versión de referencia se probó en Quest 3S con ADB. Este repositorio conserva la aplicación, las herramientas del hub, modelos de prueba y un despliegue binario ya cocinado.
 
@@ -8,7 +8,7 @@ Proyecto Unreal Engine 5.8 para cargar viviendas GLB desde una biblioteca web lo
 2. Ejecuta `Tools\cmd\verificar-entorno.bat` para revisar Unreal, Python y ADB.
 3. Ejecuta `Tools\cmd\iniciar-hub.bat` y abre `http://localhost:8765` en la laptop.
 4. Conecta Quest por USB y ejecuta `Tools\cmd\puente-usb.bat`.
-5. Para instalar Casas VR, ejecuta `Tools\cmd\instalar-casas-vr.bat`. Se copian el APK y sus paquetes de contenido; no se cocina ningún shader. `Tools\cmd\instalar-release.bat` conserva la versión de referencia anterior.
+5. Para instalar Matrix VR Show, ejecuta `Tools\cmd\instalar-matrix-vr-show.bat`. Se copian el APK y sus paquetes de contenido; no se cocina ningún shader. `Tools\cmd\instalar-release.bat` conserva la versión de referencia anterior.
 6. En Quest, usa **VER MODELOS DE LA LAPTOP**. También puedes usar **ABRIR ARCHIVO DEL DISPOSITIVO** o elegir un GLB guardado.
 
 El control izquierdo mueve al jugador; la palanca derecha gira y desplaza el menú cuando está abierto. El gatillo derecho pulsa el panel. Una pulsación corta de **X** abre o cierra la biblioteca; mantén **X + Y** durante 0,6 s para abrir las opciones visuales. Mantén **A + B** durante 1 s para liberar el modelo y volver a la biblioteca.
@@ -17,7 +17,9 @@ En **MODELOS** puedes crear una nota sobre la superficie a la que miras (hasta 6
 
 ## Instalación autónoma en Quest
 
-`Tools\cmd\instalar-casas-vr.bat` instala la versión **Casas VR** con icono y portada propios, notas, partidas y vuelo. Una vez instalada, se abre desde la biblioteca del visor sin iniciar nada en la computadora. La biblioteca de GLB locales funciona sin conexión; el hub de la laptop es opcional para añadir modelos nuevos. El paquete completo y sus hashes están en `deploy/releases/quest3s-casas-vr/`.
+`Tools\cmd\instalar-matrix-vr-show.bat` instala la versión **Matrix VR Show** con icono y portada propios, notas, partidas y vuelo. Una vez instalada, se abre desde la biblioteca del visor sin iniciar nada en la computadora. La biblioteca de GLB locales funciona sin conexión; el hub de la laptop es opcional para añadir modelos nuevos. El paquete completo y sus hashes están en `deploy/releases/matrix-vr-show/`.
+
+La identidad ciberpunk usa un portal en forma de M, cian y magenta sobre azul noche. Los originales y variantes están en `Branding/`; `Tools/cmd/generar-recursos-matrix.ps1` regenera los tamaños Android. El identificador Android `com.Allnovu.testMeta` y la carpeta `Houses` se conservan para mantener modelos, ajustes y partidas al actualizar.
 
 Si un interior se ve oscuro, abre **Opciones visuales** con **X + Y** y cambia **Luz ambiental** entre media, alta y apagada. **Y** enciende o apaga el sol para ajustar los contrastes de cada GLB. Los ajustes visuales se guardan en el visor.
 
@@ -39,7 +41,7 @@ Si un interior se ve oscuro, abre **Opciones visuales** con **X + Y** y cambia *
 
 La rama `feature/render-vr-menus` incorpora materiales iluminados para color base, metal/rugosidad, normales, oclusión y emisión de GLB, junto con perfiles y controles individuales persistentes. La luz de relleno es opcional; las sombras direccionales son experimentales y están apagadas por defecto. El perfil Referencia conserva el aspecto anterior. Los mapas que requieran otra coordenada de textura distinta de UV0 todavía se omiten.
 
-El importador estima la memoria de las imágenes requeridas y reduce su tamaño antes de decodificarlas para evitar que las últimas queden sin color al alcanzar los 128 MiB. El paquete `deploy/releases/quest3s-casas-vr/` incluye los materiales cocinados, la identidad visual y los nuevos controles. La revisión de iluminación reduce el sol y aumenta la luz ambiental para los interiores: se compiló y empaquetó, pero aún falta instalarla y comprobarla visualmente en Quest. El release de referencia `deploy/releases/quest3s-test-actual/` permanece intacto; `deploy/releases/quest3s-visual-candidate/` conserva el candidato visual anterior. Consulta [el estado de validación](docs/estado-implementacion-render-vr.md) para más detalles.
+El importador estima la memoria de las imágenes requeridas y reduce su tamaño antes de decodificarlas para evitar que las últimas queden sin color al alcanzar los 128 MiB. El paquete `deploy/releases/matrix-vr-show/` incluye los materiales cocinados, la identidad visual y los nuevos controles. La revisión de iluminación reduce el sol y aumenta la luz ambiental para los interiores: se compiló y empaquetó, pero aún falta instalarla y comprobarla visualmente en Quest. El release de referencia `deploy/releases/quest3s-test-actual/` permanece intacto; `deploy/releases/quest3s-visual-candidate/` conserva el candidato visual anterior. Consulta [el estado de validación](docs/estado-implementacion-render-vr.md) para más detalles.
 
 ## Documentación
 

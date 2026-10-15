@@ -1,4 +1,4 @@
-﻿# Casas VR para Quest 3S
+# Matrix VR Show para Quest 3S
 
 ## Del navegador a las Quest
 

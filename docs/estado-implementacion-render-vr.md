@@ -2,6 +2,12 @@
 
 Rama: `feature/render-vr-menus`. La versión probada en `deploy/releases/quest3s-test-actual/` permanece intacta.
 
+## Estado actual: Matrix VR Show
+
+El paquete `deploy/releases/matrix-vr-show/` reúne el importador actual, notas, partidas, vuelo fantasma, controles de iluminación y la identidad ciberpunk. El Cook Android ASTC terminó con 839 paquetes y `BuildCookRun` concluyó sin errores. `aapt` confirmó el nombre visible «Matrix VR Show» y el mismo identificador Android `com.Allnovu.testMeta`; los siete archivos del paquete coinciden con `SHA256SUMS.txt`.
+
+En Quest, la versión anterior de la marca cargó `girls_frontline_2_exilium_dormitory.glb` con 159/159 variantes de textura y 264/264 materiales. El usuario confirmó que la luz ambiental mejoró el interior, aunque seguía oscuro. La última calibración y la marca Matrix VR Show se empaquetaron después; su instalación y comparación visual en el visor siguen pendientes. El historial de desarrollo anterior se conserva debajo como registro técnico.
+
 ## Preparado en el código
 
 - Tres materiales `Default Lit` para opaco, máscara y mezcla en `Content/HouseMaterials/`, con parámetros de color base, metal/rugosidad, normal, AO y emisión. `GlbRuntime.cpp` lee mapas glTF embebidos, factores, color sRGB frente a datos lineales y tangentes calculadas para UV0. Mantiene el material anterior para el perfil Referencia. Los mapas que usan `texCoord` distinto de UV0 se omiten con aviso en `HouseSandbox:`.
@@ -28,7 +34,7 @@ Rama: `feature/render-vr-menus`. La versión probada en `deploy/releases/quest3s
 
 ## Validación pendiente en el visor
 
-Queda comprobar en Quest que el dormitorio decodifique todas las variantes requeridas y comparar el último APK con el mismo GLB en Referencia y Equilibrado. También hay que comprobar si la luz hace visibles los muebles y si la nueva posición de entrada evita geometría cerrada en el loft y el jardín exterior. Un mapa normal del modelo `the_interior_14_is_spacious..glb` usa `TEXCOORD_1` y aún se omite; sus imágenes de color usan `TEXCOORD_0` y sí se cargaron. Falta medir el coste de sombras/FPS. El candidato no reemplaza todavía `deploy/releases/quest3s-test-actual/`.
+Queda instalar `matrix-vr-show` en Quest y comparar el mismo GLB con luz ambiental media y alta para validar la calibración final. También falta medir el coste de sombras/FPS y confirmar la legibilidad del menú renombrado dentro del visor. Un mapa normal de `the_interior_14_is_spacious..glb` usa `TEXCOORD_1` y aún se omite. `deploy/releases/quest3s-test-actual/` permanece como referencia anterior.
 
 El primer Cook de esta rama necesitó instalar Windows SDK y compilar el módulo de editor. Otro intento de paquete falló porque Cook y UAT apuntaban a almacenes Zen distintos; el candidato final se cocinó y empaquetó usando la misma ubicación predeterminada. No vuelvas a usar `-LocalDataCachePath` solo en Cook si luego UAT empaquetará con Zen predeterminado.
 

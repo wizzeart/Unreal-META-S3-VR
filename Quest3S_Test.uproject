@@ -2,7 +2,7 @@
 	"FileVersion": 3,
 	"EngineAssociation": "5.8",
 	"Category": "",
-	"Description": "",
+	"Description": "Matrix VR Show: exploración de espacios GLB en Meta Quest",
 	"Modules": [
 		{
 			"Name": "Quest3S_Test",

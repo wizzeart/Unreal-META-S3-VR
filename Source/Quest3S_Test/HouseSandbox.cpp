@@ -53,6 +53,11 @@
 namespace
 {
 constexpr int64 MaxGlbBytes = 100 * 1024 * 1024;
+const FLinearColor CyberBackground(0.012f, 0.025f, 0.06f, 0.98f);
+const FLinearColor CyberAction(0.035f, 0.18f, 0.28f, 1.f);
+const FLinearColor CyberText(0.91f, 0.97f, 1.f, 1.f);
+const FLinearColor CyberCyan(0.31f, 0.9f, 0.98f, 1.f);
+const FLinearColor CyberMagenta(0.96f, 0.35f, 0.81f, 1.f);
 bool IsGlb(const TArray<uint8>& Bytes)
 {
     return Bytes.Num() >= 20 && Bytes[0] == 'g' && Bytes[1] == 'l' && Bytes[2] == 'T' && Bytes[3] == 'F'
@@ -1055,7 +1060,7 @@ bool UHouseNoteWidget::Initialize()
     if (!Super::Initialize()) return false;
     NoteButton = WidgetTree->ConstructWidget<UHouseActionButton>();
     NoteButton->Value = TEXT("note");
-    NoteButton->SetBackgroundColor(FLinearColor(0.88f, 0.81f, 0.48f, 0.96f));
+    NoteButton->SetBackgroundColor(CyberCyan);
     Label = WidgetTree->ConstructWidget<UTextBlock>();
     FSlateFontInfo Font = Label->GetFont(); Font.Size = 30; Label->SetFont(Font);
     Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
@@ -1076,7 +1081,7 @@ bool UHouseSandboxWidget::Initialize()
 {
     if (!Super::Initialize()) return false;
     UBorder* Backdrop = WidgetTree->ConstructWidget<UBorder>();
-    Backdrop->SetBrushColor(FLinearColor(0.025f, 0.055f, 0.095f, 0.98f));
+    Backdrop->SetBrushColor(CyberBackground);
     Backdrop->SetPadding(FMargin(26.f));
     WidgetTree->RootWidget = Backdrop;
     UVerticalBox* Frame = WidgetTree->ConstructWidget<UVerticalBox>();
@@ -1088,6 +1093,7 @@ bool UHouseSandboxWidget::Initialize()
         FSlateFontInfo Font = Text->GetFont();
         Font.Size = Size;
         Text->SetFont(Font);
+        Text->SetColorAndOpacity(FSlateColor(Size >= 30 ? CyberCyan : CyberText));
         Text->SetAutoWrapText(true);
         Parent->AddChildToVerticalBox(Text);
         return Text;
@@ -1095,27 +1101,34 @@ bool UHouseSandboxWidget::Initialize()
     auto AddButton = [&](UVerticalBox* Parent, const FString& Label, FName Name) -> UButton*
     {
         UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
-        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
+        Button->SetBackgroundColor(CyberAction);
         UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
         Text->SetText(FText::FromString(Label));
         FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
+        Text->SetColorAndOpacity(FSlateColor(CyberText));
         Text->SetAutoWrapText(true);
         Button->AddChild(Text);
         if (UVerticalBoxSlot* MenuSlot = Parent->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
         return Button;
     };
-    AddText(Frame, TEXT("CASAS VR    ·    BIBLIOTECA Y VISUALES"), 38);
+    AddText(Frame, TEXT("MATRIX VR SHOW"), 43);
+    UTextBlock* BrandLine = AddText(Frame, TEXT("EXPLORA  /  ANOTA  /  GUARDA"), 22);
+    BrandLine->SetColorAndOpacity(FSlateColor(CyberMagenta));
     UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>();
     Frame->AddChildToVerticalBox(Tabs);
     UButton* LibraryTab = WidgetTree->ConstructWidget<UButton>();
+    LibraryTab->SetBackgroundColor(CyberCyan);
     UTextBlock* LibraryTabText = WidgetTree->ConstructWidget<UTextBlock>();
     LibraryTabText->SetText(FText::FromString(TEXT("MODELOS")));
+    LibraryTabText->SetColorAndOpacity(FSlateColor(CyberBackground));
     LibraryTab->AddChild(LibraryTabText);
     LibraryTab->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnShowLibrary);
     Tabs->AddChildToHorizontalBox(LibraryTab);
     UButton* VisualTab = WidgetTree->ConstructWidget<UButton>();
+    VisualTab->SetBackgroundColor(CyberMagenta);
     UTextBlock* VisualTabText = WidgetTree->ConstructWidget<UTextBlock>();
     VisualTabText->SetText(FText::FromString(TEXT("OPCIONES VISUALES")));
+    VisualTabText->SetColorAndOpacity(FSlateColor(CyberBackground));
     VisualTab->AddChild(VisualTabText);
     VisualTab->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnShowVisual);
     Tabs->AddChildToHorizontalBox(VisualTab);
@@ -1177,10 +1190,11 @@ bool UHouseSandboxWidget::Initialize()
         UHouseVisualButton* Button = WidgetTree->ConstructWidget<UHouseVisualButton>();
         Button->Feature = Feature;
         Button->ParentMenu = this;
-        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
+        Button->SetBackgroundColor(CyberAction);
         UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
         Text->SetText(FText::FromString(Label));
         FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
+        Text->SetColorAndOpacity(FSlateColor(CyberText));
         Button->AddChild(Text);
         Button->OnClicked.AddDynamic(Button, &UHouseVisualButton::ActivateVisual);
         if (UVerticalBoxSlot* MenuSlot = VisualPanel->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
@@ -1213,11 +1227,13 @@ bool UHouseSandboxWidget::Initialize()
         for (const TCHAR* Key = Row; *Key; ++Key)
         {
             UHouseActionButton* Button = WidgetTree->ConstructWidget<UHouseActionButton>();
+            Button->SetBackgroundColor(CyberAction);
             Button->Value = FString::Chr(*Key);
             Button->ParentMenu = this;
             UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
             Label->SetText(FText::FromString(Button->Value));
             FSlateFontInfo Font = Label->GetFont(); Font.Size = 31; Label->SetFont(Font);
+            Label->SetColorAndOpacity(FSlateColor(CyberText));
             Button->AddChild(Label);
             Button->OnClicked.AddDynamic(Button, &UHouseActionButton::Activate);
             Keys->AddChildToHorizontalBox(Button);
@@ -1226,9 +1242,11 @@ bool UHouseSandboxWidget::Initialize()
     auto NoteKey = [&](const FString& Label, const FString& Value)
     {
         UHouseActionButton* Button = WidgetTree->ConstructWidget<UHouseActionButton>();
+        Button->SetBackgroundColor(CyberAction);
         Button->Value = Value; Button->ParentMenu = this;
         UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
         Text->SetText(FText::FromString(Label));
+        Text->SetColorAndOpacity(FSlateColor(CyberText));
         Button->AddChild(Text);
         Button->OnClicked.AddDynamic(Button, &UHouseActionButton::Activate);
         NotesPanel->AddChildToVerticalBox(Button);
@@ -1244,6 +1262,7 @@ bool UHouseSandboxWidget::Initialize()
     UButton* Close = AddButton(Frame, TEXT("CERRAR  ·  X PARA ABRIR  ·  X+Y VISUALES  ·  A+B MODELOS"), TEXT("ClosePanel"));
     Close->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnClose);
     StatusText = AddText(Frame, TEXT("Listo"), 24);
+    StatusText->SetColorAndOpacity(FSlateColor(CyberMagenta));
     return true;
 }
 
@@ -1267,8 +1286,9 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
         UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
         Label->SetText(FText::FromString(File));
         FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
+        Label->SetColorAndOpacity(FSlateColor(CyberText));
         Label->SetAutoWrapText(true);
-        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
+        Button->SetBackgroundColor(CyberAction);
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseFileButton::ActivateFile);
         if (UVerticalBoxSlot* MenuSlot = FileList->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
@@ -1283,6 +1303,8 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
             UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
             Label->SetText(FText::FromString(TEXT("CARGAR: ") + SaveName));
             FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
+            Label->SetColorAndOpacity(FSlateColor(CyberText));
+            Button->SetBackgroundColor(CyberAction);
             Button->AddChild(Label);
             Button->OnClicked.AddDynamic(Button, &UHouseActionButton::Activate);
             SaveList->AddChildToVerticalBox(Button);
@@ -1394,8 +1416,9 @@ void UHouseSandboxWidget::SetRemoteModels(const TArray<TPair<FString, FString>>&
         UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
         Label->SetText(FText::FromString(TEXT("DESCARGAR  |  ") + Model.Key));
         FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
+        Label->SetColorAndOpacity(FSlateColor(CyberText));
         Label->SetAutoWrapText(true);
-        Button->SetBackgroundColor(FLinearColor(0.12f, 0.37f, 0.43f, 1.f));
+        Button->SetBackgroundColor(CyberAction);
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseRemoteButton::ActivateRemote);
         if (UVerticalBoxSlot* MenuSlot = RemoteList->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));

@@ -28,7 +28,9 @@ La caja del modelo se centra horizontalmente. El importador estima el suelo por 
 
 ## Estado de materiales
 
-El perfil Referencia usa `Widget3DPassThrough_*_OneSided`, ya incluidos en el release probado. Los perfiles iluminados de la rama `feature/render-vr-menus` usan tres materiales nuevos `Default Lit` para `OPAQUE`, `MASK` y `BLEND`. El importador lee `baseColorTexture`, `metallicRoughnessTexture`, `normalTexture`, `occlusionTexture` y `emissiveTexture`, sus factores glTF y tangentes calculadas para UV0. Omite mapas que usan otra coordenada de textura y lo registra en `HouseSandbox:`. Las sombras direccionales se pueden activar de forma experimental; AO de pantalla y sombras calculadas por cada luz glTF no están implementadas. Los materiales nuevos están cocinados en el candidato Android ASTC y necesitan validación visual en Quest antes de considerarse parte del release probado.
+El perfil Referencia usa `Widget3DPassThrough_*_OneSided`, ya incluidos en el release probado. Los perfiles iluminados de la rama `feature/render-vr-menus` usan tres materiales nuevos `Default Lit` para `OPAQUE`, `MASK` y `BLEND`. El importador lee `baseColorTexture`, `metallicRoughnessTexture`, `normalTexture`, `occlusionTexture` y `emissiveTexture`, sus factores glTF y tangentes calculadas para UV0. Omite mapas que usan otra coordenada de textura y lo registra en `HouseSandbox:`. Las sombras direccionales se pueden activar de forma experimental; AO de pantalla y sombras calculadas por cada luz glTF no están implementadas. Los materiales nuevos están cocinados en `quest3s-casas-vr`; la última calibración de luz sigue pendiente de validación visual en Quest.
+
+La escena iluminada combina un sol móvil sin sombras por defecto, una luz de relleno junto a la cámara y un Sky Light móvil con un cubemap incluido en el cocinado. El panel visual permite ajustar la luz ambiental y persiste la selección en `Houses/visual_settings.json`. La revisión de octubre de 2026 reduce la intensidad del sol y aumenta el rango de luz ambiental; su resultado visual requiere una nueva comprobación en Quest.
 
 La configuración contiene opciones generales de Unreal como MSAA móvil, pero algunas funciones de escritorio presentes en `DefaultEngine.ini` no están disponibles en el renderizador Quest. No cambies los ajustes visuales basándote solo en el INI; valida en el visor.
 
@@ -50,4 +52,5 @@ La lectura y construcción son sincrónicas en el hilo de juego; un GLB grande p
 - Laptop: `Tools/models/` contiene los GLB subidos y los ejemplos versionados.
 - Quest: el directorio persistente privado de la app, subcarpeta `Houses`, guarda descargas y archivos elegidos. En el dispositivo probado aparece bajo `/sdcard/Android/data/com.Allnovu.testMeta/files/Houses`.
 - Las opciones visuales se guardan en `Houses/visual_settings.json` y se pueden cambiar desde el panel abierto con **X + Y**.
+- Las partidas se guardan en `Houses/Saves/<nombre>.json` mediante escritura temporal y reemplazo. Cada archivo referencia el GLB local e incluye posicion, giro y notas en coordenadas Unreal; el GLB debe seguir disponible. Las notas son widgets de mundo con colision solo de visibilidad para el puntero, sin bloqueo del jugador.
 - La app no usa una nube externa ni FTP. El transporte actual es HTTP local y copia al almacenamiento del visor.

@@ -8,10 +8,18 @@ Proyecto Unreal Engine 5.8 para cargar viviendas GLB desde una biblioteca web lo
 2. Ejecuta `Tools\cmd\verificar-entorno.bat` para revisar Unreal, Python y ADB.
 3. Ejecuta `Tools\cmd\iniciar-hub.bat` y abre `http://localhost:8765` en la laptop.
 4. Conecta Quest por USB y ejecuta `Tools\cmd\puente-usb.bat`.
-5. Para instalar la versión probada, ejecuta `Tools\cmd\instalar-release.bat`. Se copian el APK y sus paquetes de contenido; no se cocina ningún shader.
+5. Para instalar Casas VR, ejecuta `Tools\cmd\instalar-casas-vr.bat`. Se copian el APK y sus paquetes de contenido; no se cocina ningún shader. `Tools\cmd\instalar-release.bat` conserva la versión de referencia anterior.
 6. En Quest, usa **VER MODELOS DE LA LAPTOP**. También puedes usar **ABRIR ARCHIVO DEL DISPOSITIVO** o elegir un GLB guardado.
 
 El control izquierdo mueve al jugador; la palanca derecha gira y desplaza el menú cuando está abierto. El gatillo derecho pulsa el panel. Una pulsación corta de **X** abre o cierra la biblioteca; mantén **X + Y** durante 0,6 s para abrir las opciones visuales. Mantén **A + B** durante 1 s para liberar el modelo y volver a la biblioteca.
+
+En **MODELOS** puedes crear una nota sobre la superficie a la que miras (hasta 6 m), escribirla con el teclado del panel y volver a editarla pulsando la nota con el gatillo derecho. Las notas se atraviesan. **GUARDAR PARTIDA ACTUAL** guarda el GLB, la posicion del jugador y hasta 100 notas en `Houses/Saves`; la lista **CARGAR** recupera una partida. Conserva el GLB local con el mismo nombre para poder cargarla. **Y** corto enciende o apaga el sol; **X+Y** sigue abriendo visuales. **B** corto o **VUELO FANTASMA** en MODELOS activa el desplazamiento vertical con la palanca derecha y permite atravesar paredes; desactivalo con **B** o desde el mismo boton una vez fuera de la geometria.
+
+## Instalación autónoma en Quest
+
+`Tools\cmd\instalar-casas-vr.bat` instala la versión **Casas VR** con icono y portada propios, notas, partidas y vuelo. Una vez instalada, se abre desde la biblioteca del visor sin iniciar nada en la computadora. La biblioteca de GLB locales funciona sin conexión; el hub de la laptop es opcional para añadir modelos nuevos. El paquete completo y sus hashes están en `deploy/releases/quest3s-casas-vr/`.
+
+Si un interior se ve oscuro, abre **Opciones visuales** con **X + Y** y cambia **Luz ambiental** entre media, alta y apagada. **Y** enciende o apaga el sol para ajustar los contrastes de cada GLB. Los ajustes visuales se guardan en el visor.
 
 ## Mapa del repositorio
 
@@ -31,7 +39,7 @@ El control izquierdo mueve al jugador; la palanca derecha gira y desplaza el men
 
 La rama `feature/render-vr-menus` incorpora materiales iluminados para color base, metal/rugosidad, normales, oclusión y emisión de GLB, junto con perfiles y controles individuales persistentes. La luz de relleno es opcional; las sombras direccionales son experimentales y están apagadas por defecto. El perfil Referencia conserva el aspecto anterior. Los mapas que requieran otra coordenada de textura distinta de UV0 todavía se omiten.
 
-Los materiales nuevos ya se cocinaron y empaquetaron en `deploy/releases/quest3s-visual-candidate/`, y ese candidato se instaló por ADB. A+B devolvió a la biblioteca en el visor; X+Y abrió las opciones visuales y el usuario pudo desplazarse y cambiar de perfil. Tras detectar interiores oscuros y texturas ausentes, el candidato recibió ajustes de texturas, tangentes, posición de entrada e iluminación. El importador ahora estima la memoria de todas las imágenes requeridas y reduce su tamaño antes de decodificarlas para evitar que las últimas queden sin color al alcanzar los 128 MiB. Falta validar visualmente el último APK y medir su rendimiento. El release probado en `deploy/releases/quest3s-test-actual/` sigue siendo la versión anterior; `Tools\cmd\instalar-release.bat` lo instala y `Tools\cmd\instalar-candidato-visual.bat` instala el candidato. Consulta [el estado de validación](docs/estado-implementacion-render-vr.md) antes de usarlo.
+El importador estima la memoria de las imágenes requeridas y reduce su tamaño antes de decodificarlas para evitar que las últimas queden sin color al alcanzar los 128 MiB. El paquete `deploy/releases/quest3s-casas-vr/` incluye los materiales cocinados, la identidad visual y los nuevos controles. La revisión de iluminación reduce el sol y aumenta la luz ambiental para los interiores: se compiló y empaquetó, pero aún falta instalarla y comprobarla visualmente en Quest. El release de referencia `deploy/releases/quest3s-test-actual/` permanece intacto; `deploy/releases/quest3s-visual-candidate/` conserva el candidato visual anterior. Consulta [el estado de validación](docs/estado-implementacion-render-vr.md) para más detalles.
 
 ## Documentación
 

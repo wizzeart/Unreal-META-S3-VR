@@ -20,6 +20,8 @@ class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class UInputMappingContext;
 class ADirectionalLight;
+class ASkyLight;
+class UTextureCube;
 
 enum class EHousePanel : uint8 { Closed, Library, Visual, Notes };
 
@@ -39,6 +41,7 @@ struct FHouseVisualSettings
     bool bEmissive = true;
     bool bFillLight = true;
     bool bShadows = false;
+    float AmbientIntensity = 1.4f;
 };
 
 UCLASS()
@@ -158,6 +161,8 @@ private:
     UPROPERTY() TObjectPtr<AHouseMenuInputActor> MenuInput;
     UPROPERTY() TObjectPtr<class UPointLightComponent> PreviewLight;
     UPROPERTY() TObjectPtr<ADirectionalLight> SceneSun;
+    UPROPERTY() TObjectPtr<ASkyLight> SceneSky;
+    UPROPERTY() TObjectPtr<UTextureCube> CookedSkyCubemap;
     UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> LitMaterials;
     UPROPERTY() TArray<TObjectPtr<UMaterialInstanceDynamic>> ReferenceMaterials;
     // Hard references keep the runtime-loaded parents in the Android cook.

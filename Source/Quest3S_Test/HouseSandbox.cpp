@@ -33,6 +33,9 @@
 #include "Components/PointLightComponent.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyLightComponent.h"
+#include "Engine/TextureCube.h"
 #include "Components/HorizontalBox.h"
 #include "Components/Spacer.h"
 #include "Components/CanvasPanel.h"
@@ -70,6 +73,8 @@ AHouseSandboxGameMode::AHouseSandboxGameMode()
     CookedLitBlend = Blend.Object;
     static ConstructorHelpers::FObjectFinder<UInputMappingContext> Buttons(TEXT("/Game/HouseInput/IMC_HouseButtons.IMC_HouseButtons"));
     HouseButtonContext = Buttons.Object;
+    static ConstructorHelpers::FObjectFinder<UTextureCube> DaylightCubemap(TEXT("/Engine/MapTemplates/Sky/DaylightAmbientCubemap.DaylightAmbientCubemap"));
+    CookedSkyCubemap = DaylightCubemap.Object;
 }
 
 AHouseMenuInputActor::AHouseMenuInputActor()
@@ -314,7 +319,7 @@ void AHouseSandboxGameMode::PlaceMenuAtPlayer()
     PreviewLight = NewObject<UPointLightComponent>(Pawn, TEXT("HousePreviewLight"));
     PreviewLight->AttachToComponent(Camera, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
     PreviewLight->SetIntensityUnits(ELightUnits::Lumens);
-    PreviewLight->SetIntensity(1500.f);
+    PreviewLight->SetIntensity(1800.f);
     PreviewLight->SetAttenuationRadius(1400.f);
     PreviewLight->SetCastShadows(false);
     PreviewLight->RegisterComponent();
@@ -325,9 +330,21 @@ void AHouseSandboxGameMode::PlaceMenuAtPlayer()
         SceneSun->SetActorRotation(FRotator(-55.f, 25.f, 0.f));
         ULightComponent* Sun = SceneSun->GetLightComponent();
         Sun->SetMobility(EComponentMobility::Movable);
-        Sun->SetIntensity(3.f);
+        Sun->SetIntensity(0.5f);
         Sun->SetCastShadows(false);
         Sun->SetVisibility(false);
+    }
+    SceneSky = GetWorld()->SpawnActor<ASkyLight>();
+    if (SceneSky)
+    {
+        USkyLightComponent* Sky = SceneSky->GetLightComponent();
+        Sky->SetMobility(EComponentMobility::Movable);
+        Sky->SourceType = SLS_SpecifiedCubemap;
+        Sky->SetCubemap(CookedSkyCubemap);
+        Sky->SetIntensity(VisualSettings.AmbientIntensity);
+        Sky->SetCastShadows(false);
+        Sky->SetVisibility(false);
+        UE_LOG(LogTemp, Display, TEXT("HouseSandbox: ambient cubemap available=%d"), CookedSkyCubemap != nullptr);
     }
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: world menu placed in front of XR camera"));
 }
@@ -395,6 +412,7 @@ void AHouseSandboxGameMode::ReturnToLibrary()
     MaterialFeatures = FHouseMaterialFeatures();
     if (PreviewLight) PreviewLight->SetVisibility(false);
     if (SceneSun) SceneSun->GetLightComponent()->SetVisibility(false);
+    if (SceneSky) SceneSky->GetLightComponent()->SetVisibility(false);
     if (APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0)) Pawn->SetActorLocation(FVector::ZeroVector);
     LastError = TEXT("Elige un modelo de la laptop o del visor");
     RefreshMenu();
@@ -417,6 +435,15 @@ void AHouseSandboxGameMode::LoadVisualSettings()
     Json->TryGetBoolField(TEXT("emissive"), VisualSettings.bEmissive);
     Json->TryGetBoolField(TEXT("fillLight"), VisualSettings.bFillLight);
     Json->TryGetBoolField(TEXT("shadows"), VisualSettings.bShadows);
+    double Ambient = VisualSettings.AmbientIntensity;
+    if (Json->TryGetNumberField(TEXT("ambientIntensity"), Ambient))
+    {
+        double LightingVersion = 0.0;
+        Json->TryGetNumberField(TEXT("lightingVersion"), LightingVersion);
+        if (LightingVersion < 2.0 && Ambient > 0.0)
+            Ambient = Ambient < 1.1 ? 1.4 : 2.2;
+        VisualSettings.AmbientIntensity = FMath::Clamp(static_cast<float>(Ambient), 0.f, 2.2f);
+    }
 }
 
 void AHouseSandboxGameMode::SaveVisualSettings() const
@@ -429,6 +456,8 @@ void AHouseSandboxGameMode::SaveVisualSettings() const
     Json->SetBoolField(TEXT("emissive"), VisualSettings.bEmissive);
     Json->SetBoolField(TEXT("fillLight"), VisualSettings.bFillLight);
     Json->SetBoolField(TEXT("shadows"), VisualSettings.bShadows);
+    Json->SetNumberField(TEXT("ambientIntensity"), VisualSettings.AmbientIntensity);
+    Json->SetNumberField(TEXT("lightingVersion"), 2);
     FString Contents;
     const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Contents);
     if (FJsonSerializer::Serialize(Json, Writer))
@@ -461,11 +490,17 @@ void AHouseSandboxGameMode::ApplyVisualSettings(bool bSave)
         Sun->SetCastShadows(VisualSettings.bShadows);
         Sun->SetVisibility(bLightScene && bSunOn);
     }
+    if (SceneSky)
+    {
+        USkyLightComponent* Sky = SceneSky->GetLightComponent();
+        Sky->SetIntensity(VisualSettings.AmbientIntensity);
+        Sky->SetVisibility(bLightScene && CookedSkyCubemap && VisualSettings.AmbientIntensity > 0.f);
+    }
     if (MenuWidget) MenuWidget->UpdateVisualLabels();
     if (bSave) SaveVisualSettings();
-    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: visual lit=%d normal=%d ao=%d metalrough=%d emissive=%d fill=%d shadows=%d sun=%d"),
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: visual lit=%d normal=%d ao=%d metalrough=%d emissive=%d fill=%d shadows=%d ambient=%.2f sun=%d"),
         VisualSettings.bLit, VisualSettings.bNormal, VisualSettings.bOcclusion, VisualSettings.bMetalRough,
-        VisualSettings.bEmissive, VisualSettings.bFillLight, VisualSettings.bShadows, bSunOn);
+        VisualSettings.bEmissive, VisualSettings.bFillLight, VisualSettings.bShadows, VisualSettings.AmbientIntensity, bSunOn);
 }
 
 void AHouseSandboxGameMode::ChangeVisualControl(int32 Feature)
@@ -479,6 +514,10 @@ void AHouseSandboxGameMode::ChangeVisualControl(int32 Feature)
     case 4: VisualSettings.bEmissive = !VisualSettings.bEmissive; break;
     case 5: VisualSettings.bFillLight = !VisualSettings.bFillLight; break;
     case 6: VisualSettings.bShadows = !VisualSettings.bShadows; break;
+    case 7:
+        VisualSettings.AmbientIntensity = VisualSettings.AmbientIntensity < 0.4f ? 1.4f
+            : VisualSettings.AmbientIntensity < 1.8f ? 2.2f : 0.f;
+        break;
     case 100:
         VisualSettings = FHouseVisualSettings();
         VisualSettings.bLit = false; VisualSettings.bFillLight = false; break;
@@ -1159,6 +1198,7 @@ bool UHouseSandboxWidget::Initialize()
     VisualButton(4, TEXT("Emisión"));
     VisualButton(5, TEXT("Luz de relleno"));
     VisualButton(6, TEXT("Sombras direccionales (experimental)"));
+    VisualButton(7, TEXT("Luz ambiental: media"));
     VisualButton(203, TEXT("ENCENDER / APAGAR SOL  ·  Y CORTO"));
     VisualButton(204, TEXT("VUELO FANTASMA  ·  B CORTO  ·  PALANCA DERECHA VERTICAL"));
     VisualButton(200, TEXT("VOLVER A MODELOS Y LIBERAR CASA"));
@@ -1283,7 +1323,7 @@ void UHouseSandboxWidget::ScrollBy(float Amount)
 
 void UHouseSandboxWidget::UpdateVisualLabels()
 {
-    if (!Sandbox || VisualLabels.Num() < 7 || VisualButtons.Num() < 7) return;
+    if (!Sandbox || VisualLabels.Num() < 8 || VisualButtons.Num() < 8) return;
     const FHouseVisualSettings& V = Sandbox->GetVisualSettings();
     const FHouseMaterialFeatures& F = Sandbox->GetMaterialFeatures();
     const bool States[7] = { V.bLit, V.bNormal, V.bOcclusion, V.bMetalRough, V.bEmissive, V.bFillLight, V.bShadows };
@@ -1297,6 +1337,9 @@ void UHouseSandboxWidget::UpdateVisualLabels()
         VisualLabels[Index]->SetText(FText::FromString(FString::Printf(TEXT("%s   ·   %s"), Names[Index],
             Available[Index] ? (States[Index] ? TEXT("ACTIVO") : TEXT("APAGADO")) : TEXT("SIN MAPA EN ESTE GLB"))));
     }
+    const float Ambient = V.AmbientIntensity;
+    const TCHAR* AmbientName = Ambient < 0.1f ? TEXT("APAGADA") : Ambient < 1.8f ? TEXT("MEDIA") : TEXT("ALTA");
+    VisualLabels[7]->SetText(FText::FromString(FString::Printf(TEXT("Luz ambiental   ·   %s"), AmbientName)));
 }
 
 void UHouseSandboxWidget::ActivateVisualControl(int32 Feature)

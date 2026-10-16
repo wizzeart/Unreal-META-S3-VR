@@ -41,8 +41,11 @@
 #include "Components/Spacer.h"
 #include "Components/CanvasPanel.h"
 #include "Components/AudioComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Components/Image.h"
 #include "Engine/Texture2D.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Sound/SoundWaveProcedural.h"
 #include "Serialization/JsonWriter.h"
 #include "EngineUtils.h"
@@ -91,6 +94,10 @@ AHouseSandboxGameMode::AHouseSandboxGameMode()
 AHouseMenuInputActor::AHouseMenuInputActor()
 {
     PrimaryActorTick.bCanEverTick = true;
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    LaserCylinderMesh = Cylinder.Object;
+    LaserSphereMesh = Sphere.Object;
 }
 
 void AHouseMenuInputActor::Initialize(APawn* Pawn)
@@ -108,6 +115,7 @@ void AHouseMenuInputActor::Initialize(APawn* Pawn)
         if (Controller && Controller->GetName().StartsWith(TEXT("MotionControllerRightAim")))
         {
             PointerOrigin = Controller;
+            bRightControllerAim = true;
             break;
         }
     }
@@ -118,6 +126,34 @@ void AHouseMenuInputActor::Initialize(APawn* Pawn)
     Pointer->VirtualUserIndex = 2;
     Pointer->PointerIndex = 2;
     Pointer->RegisterComponent();
+    if (bRightControllerAim && LaserCylinderMesh && LaserSphereMesh)
+    {
+        UMaterialInstanceDynamic* LaserMaterial = nullptr;
+        if (UMaterialInterface* Parent = LoadObject<UMaterialInterface>(nullptr,
+            TEXT("/Game/HouseMaterials/M_HouseLitOpaque.M_HouseLitOpaque")))
+        {
+            LaserMaterial = UMaterialInstanceDynamic::Create(Parent, this);
+            LaserMaterial->SetVectorParameterValue(TEXT("BaseColorFactor"), CyberCyan);
+            LaserMaterial->SetVectorParameterValue(TEXT("EmissiveFactor"), CyberCyan * 8.f);
+        }
+        LaserBeam = NewObject<UStaticMeshComponent>(Pawn, TEXT("HouseRightLaserBeam"));
+        LaserBeam->SetupAttachment(Pointer);
+        LaserBeam->SetStaticMesh(LaserCylinderMesh);
+        LaserBeam->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        LaserBeam->SetCastShadow(false);
+        if (LaserMaterial) LaserBeam->SetMaterial(0, LaserMaterial);
+        LaserBeam->RegisterComponent();
+        LaserDot = NewObject<UStaticMeshComponent>(Pawn, TEXT("HouseRightLaserDot"));
+        LaserDot->SetupAttachment(Pointer);
+        LaserDot->SetStaticMesh(LaserSphereMesh);
+        LaserDot->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        LaserDot->SetCastShadow(false);
+        LaserDot->SetRelativeScale3D(FVector(0.025f));
+        if (LaserMaterial) LaserDot->SetMaterial(0, LaserMaterial);
+        LaserDot->RegisterComponent();
+        LaserBeam->SetVisibility(false);
+        LaserDot->SetVisibility(false);
+    }
     APlayerController* Controller = GetWorld()->GetFirstPlayerController();
     if (Controller && Controller->GetLocalPlayer())
     {
@@ -174,6 +210,7 @@ void AHouseMenuInputActor::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
     if (!ControlledPawn || !PlayerCamera) return;
+    UpdateLaser();
     const float Now = GetWorld()->GetTimeSeconds();
     if (bXHeld && bYHeld && !bVisualChordFired && Now - FMath::Max(XDownTime, YDownTime) >= 0.6f)
     {
@@ -227,6 +264,23 @@ void AHouseMenuInputActor::Tick(float DeltaSeconds)
         const FVector HeadAfter = PlayerCamera->GetComponentLocation();
         ControlledPawn->AddActorWorldOffset(FVector(HeadBefore.X - HeadAfter.X, HeadBefore.Y - HeadAfter.Y, 0.f));
     }
+}
+
+void AHouseMenuInputActor::UpdateLaser()
+{
+    if (!Pointer || !LaserBeam || !LaserDot) return;
+    const AHouseSandboxGameMode* Sandbox = Cast<AHouseSandboxGameMode>(UGameplayStatics::GetGameMode(this));
+    const bool bVisible = Sandbox && (Sandbox->IsMenuVisible() || Pointer->GetHoveredWidgetComponent() != nullptr);
+    LaserBeam->SetVisibility(bVisible);
+    LaserDot->SetVisibility(bVisible);
+    if (!bVisible) return;
+    const FHitResult& Hit = Pointer->GetLastHitResult();
+    const float End = Hit.bBlockingHit ? FMath::Clamp(Hit.Distance, 12.f, 500.f) : 500.f;
+    const float Start = 8.f;
+    LaserBeam->SetRelativeLocation(FVector((Start + End) * 0.5f, 0.f, 0.f));
+    LaserBeam->SetRelativeRotation(FRotationMatrix::MakeFromZ(FVector::ForwardVector).Rotator());
+    LaserBeam->SetRelativeScale3D(FVector(0.005f, 0.005f, (End - Start) / 100.f));
+    LaserDot->SetRelativeLocation(FVector(End, 0.f, 0.f));
 }
 
 void AHouseMenuInputActor::TriggerDown()
@@ -924,6 +978,7 @@ void AHouseSandboxGameMode::RebuildNotes()
         Widget->SetWidgetSpace(EWidgetSpace::World);
         Widget->SetDrawSize(FVector2D(500, 240));
         Widget->SetWorldScale3D(FVector(0.08f));
+        Widget->SetRedrawTime(0.1f);
         Widget->SetTwoSided(true);
         Widget->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
         Widget->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -1286,6 +1341,36 @@ void AHouseSandboxGameMode::LoadGame(const FString& Slot)
     UE_LOG(LogTemp, Display, TEXT("HouseSandbox: game loaded slot=%s notes=%d"), *Slot, Notes.Num());
 }
 
+void UHouseHoverButton::SetMenuColors(const FLinearColor& Normal, const FLinearColor& Focus)
+{
+    if (!bHoverEventsBound)
+    {
+        OnHovered.AddDynamic(this, &UHouseHoverButton::ShowHover);
+        OnUnhovered.AddDynamic(this, &UHouseHoverButton::ClearHover);
+        bHoverEventsBound = true;
+    }
+    NormalColor = Normal;
+    FocusColor = Focus;
+    SetBackgroundColor(bHovered ? FocusColor : NormalColor);
+}
+
+void UHouseHoverButton::ShowHover()
+{
+    bHovered = true;
+    SetBackgroundColor(FocusColor);
+    if (UTextBlock* Text = Cast<UTextBlock>(GetContent()))
+        Text->SetColorAndOpacity(FSlateColor(CyberBackground));
+}
+
+void UHouseHoverButton::ClearHover()
+{
+    bHovered = false;
+    SetBackgroundColor(NormalColor);
+    if (UTextBlock* Text = Cast<UTextBlock>(GetContent()))
+        Text->SetColorAndOpacity(FSlateColor(NormalColor.Equals(CyberCyan) || NormalColor.Equals(CyberMagenta)
+            ? CyberBackground : CyberText));
+}
+
 void UHouseFileButton::ActivateFile()
 {
     if (ParentMenu) ParentMenu->OpenFile(FileName);
@@ -1319,7 +1404,7 @@ bool UHouseNoteWidget::Initialize()
     Outline->SetBrushColor(CyberCyan);
     NoteButton = WidgetTree->ConstructWidget<UHouseActionButton>();
     NoteButton->Value = TEXT("note");
-    NoteButton->SetBackgroundColor(CyberAction);
+    NoteButton->SetMenuColors(CyberAction);
     UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
     SpeakerIcon = WidgetTree->ConstructWidget<UImage>();
     SpeakerIcon->SetDesiredSizeOverride(FVector2D(60.f, 60.f));
@@ -1375,9 +1460,12 @@ void UHouseNoteWidget::SetVoiceState(bool bInVoice, bool bInPlaying, bool bInPau
 void UHouseNoteWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
     Super::NativeTick(MyGeometry, InDeltaTime);
-    if (bPlaying && Outline)
+    if (bPlaying && Outline && GetWorld())
     {
-        const float Pulse = 0.7f + 0.3f * FMath::Sin(GetWorld()->GetTimeSeconds() * 7.f);
+        const float Now = GetWorld()->GetTimeSeconds();
+        if (Now - LastPulseTime < 0.1f) return;
+        LastPulseTime = Now;
+        const float Pulse = 0.7f + 0.3f * FMath::Sin(Now * 7.f);
         Outline->SetBrushColor(FLinearColor(CyberMagenta.R * Pulse, CyberMagenta.G * Pulse,
             CyberMagenta.B * Pulse, 1.f));
     }
@@ -1406,8 +1494,8 @@ bool UHouseSandboxWidget::Initialize()
     };
     auto AddButton = [&](UVerticalBox* Parent, const FString& Label, FName Name) -> UButton*
     {
-        UButton* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
-        Button->SetBackgroundColor(CyberAction);
+        UHouseHoverButton* Button = WidgetTree->ConstructWidget<UHouseHoverButton>(UHouseHoverButton::StaticClass(), Name);
+        Button->SetMenuColors(CyberAction);
         UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
         Text->SetText(FText::FromString(Label));
         FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
@@ -1422,16 +1510,16 @@ bool UHouseSandboxWidget::Initialize()
     BrandLine->SetColorAndOpacity(FSlateColor(CyberMagenta));
     UHorizontalBox* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>();
     Frame->AddChildToVerticalBox(Tabs);
-    UButton* LibraryTab = WidgetTree->ConstructWidget<UButton>();
-    LibraryTab->SetBackgroundColor(CyberCyan);
+    UHouseHoverButton* LibraryTab = WidgetTree->ConstructWidget<UHouseHoverButton>();
+    LibraryTab->SetMenuColors(CyberCyan, CyberMagenta);
     UTextBlock* LibraryTabText = WidgetTree->ConstructWidget<UTextBlock>();
     LibraryTabText->SetText(FText::FromString(TEXT("MODELOS")));
     LibraryTabText->SetColorAndOpacity(FSlateColor(CyberBackground));
     LibraryTab->AddChild(LibraryTabText);
     LibraryTab->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnShowLibrary);
     Tabs->AddChildToHorizontalBox(LibraryTab);
-    UButton* VisualTab = WidgetTree->ConstructWidget<UButton>();
-    VisualTab->SetBackgroundColor(CyberMagenta);
+    UHouseHoverButton* VisualTab = WidgetTree->ConstructWidget<UHouseHoverButton>();
+    VisualTab->SetMenuColors(CyberMagenta, CyberCyan);
     UTextBlock* VisualTabText = WidgetTree->ConstructWidget<UTextBlock>();
     VisualTabText->SetText(FText::FromString(TEXT("OPCIONES VISUALES")));
     VisualTabText->SetColorAndOpacity(FSlateColor(CyberBackground));
@@ -1501,7 +1589,7 @@ bool UHouseSandboxWidget::Initialize()
         UHouseVisualButton* Button = WidgetTree->ConstructWidget<UHouseVisualButton>();
         Button->Feature = Feature;
         Button->ParentMenu = this;
-        Button->SetBackgroundColor(CyberAction);
+        Button->SetMenuColors(CyberAction);
         UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
         Text->SetText(FText::FromString(Label));
         FSlateFontInfo Font = Text->GetFont(); Font.Size = 27; Text->SetFont(Font);
@@ -1538,7 +1626,7 @@ bool UHouseSandboxWidget::Initialize()
         for (const TCHAR* Key = Row; *Key; ++Key)
         {
             UHouseActionButton* Button = WidgetTree->ConstructWidget<UHouseActionButton>();
-            Button->SetBackgroundColor(CyberAction);
+            Button->SetMenuColors(CyberAction);
             Button->Value = FString::Chr(*Key);
             Button->ParentMenu = this;
             UTextBlock* Label = WidgetTree->ConstructWidget<UTextBlock>();
@@ -1553,7 +1641,7 @@ bool UHouseSandboxWidget::Initialize()
     auto NoteKey = [&](const FString& Label, const FString& Value)
     {
         UHouseActionButton* Button = WidgetTree->ConstructWidget<UHouseActionButton>();
-        Button->SetBackgroundColor(CyberAction);
+        Button->SetMenuColors(CyberAction);
         Button->Value = Value; Button->ParentMenu = this;
         UTextBlock* Text = WidgetTree->ConstructWidget<UTextBlock>();
         Text->SetText(FText::FromString(Label));
@@ -1616,7 +1704,7 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
         FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
         Label->SetColorAndOpacity(FSlateColor(CyberText));
         Label->SetAutoWrapText(true);
-        Button->SetBackgroundColor(CyberAction);
+        Button->SetMenuColors(CyberAction);
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseFileButton::ActivateFile);
         if (UVerticalBoxSlot* MenuSlot = FileList->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));
@@ -1632,7 +1720,7 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
             Label->SetText(FText::FromString(TEXT("CARGAR: ") + SaveName));
             FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
             Label->SetColorAndOpacity(FSlateColor(CyberText));
-            Button->SetBackgroundColor(CyberAction);
+            Button->SetMenuColors(CyberAction);
             Button->AddChild(Label);
             Button->OnClicked.AddDynamic(Button, &UHouseActionButton::Activate);
             SaveList->AddChildToVerticalBox(Button);
@@ -1769,7 +1857,7 @@ void UHouseSandboxWidget::SetRemoteModels(const TArray<TPair<FString, FString>>&
         FSlateFontInfo Font = Label->GetFont(); Font.Size = 27; Label->SetFont(Font);
         Label->SetColorAndOpacity(FSlateColor(CyberText));
         Label->SetAutoWrapText(true);
-        Button->SetBackgroundColor(CyberAction);
+        Button->SetMenuColors(CyberAction);
         Button->AddChild(Label);
         Button->OnClicked.AddDynamic(Button, &UHouseRemoteButton::ActivateRemote);
         if (UVerticalBoxSlot* MenuSlot = RemoteList->AddChildToVerticalBox(Button)) MenuSlot->SetPadding(FMargin(0.f, 7.f));

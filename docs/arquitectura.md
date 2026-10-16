@@ -20,6 +20,8 @@ El hub es local. Por USB, `adb reverse tcp:8765 tcp:8765` hace que `127.0.0.1:87
 
 `AHouseSandboxGameMode` crea el panel, busca modelos locales, consulta el hub, descarga el GLB y gestiona el selector Android. `AHouseMenuInputActor` conecta el control derecho al panel y procesa desplazamiento y giro. El mapa inicial es `/Game/XRFramework/Levels/L_XRTemplate` y el pawn procede de `/Game/XRFramework/Blueprints/BP_XRPawn`.
 
+El control derecho proyecta un láser cian hasta el primer impacto del puntero de widgets cuando el menú está abierto, y los botones cambian a un fondo de alto contraste al apuntarlos. Los marcadores de voz limitan su redibujado a 10 Hz durante el pulso del borde; Resonance Audio usa calidad binaural baja en Quest para reducir el coste por fotograma.
+
 Al iniciar, `PlaceMenuAtPlayer` oculta la geometría de muestra de `L_XRTemplate` antes de mostrar la biblioteca. Así el suelo del mapa no tapa el widget 3D del menú. La misma limpieza se repite al cargar un GLB.
 
 Los cuatro botones de los acordes se registran como acciones booleanas en `Content/HouseInput/IMC_HouseButtons`. `Config/DefaultInput.ini` activa ese contexto al iniciar OpenXR y `AHouseMenuInputActor` escucha `Started`, `Completed` y `Canceled` mediante `UEnhancedInputComponent`. Las pulsaciones de X/Y/A/B y los acordes completados se registran con el prefijo `HouseSandbox:` para diagnosticar el visor.

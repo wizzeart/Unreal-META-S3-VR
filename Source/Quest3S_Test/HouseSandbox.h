@@ -27,6 +27,8 @@ class USoundWaveProcedural;
 class UImage;
 class UBorder;
 class UTexture2D;
+class UStaticMesh;
+class UStaticMeshComponent;
 
 enum class EHousePanel : uint8 { Closed, Library, Visual, Notes, Voice };
 
@@ -64,8 +66,13 @@ public:
     virtual void Tick(float DeltaSeconds) override;
 private:
     UPROPERTY() TObjectPtr<UWidgetInteractionComponent> Pointer;
+    UPROPERTY() TObjectPtr<UStaticMeshComponent> LaserBeam;
+    UPROPERTY() TObjectPtr<UStaticMeshComponent> LaserDot;
+    UPROPERTY() TObjectPtr<UStaticMesh> LaserCylinderMesh;
+    UPROPERTY() TObjectPtr<UStaticMesh> LaserSphereMesh;
     UPROPERTY() TObjectPtr<APawn> ControlledPawn;
     UPROPERTY() TObjectPtr<class UCameraComponent> PlayerCamera;
+    bool bRightControllerAim = false;
     bool bTriggerHeld = false;
     bool bSuppressTriggerUntilRelease = false;
     float ForwardInput = 0.f;
@@ -82,6 +89,7 @@ private:
     void MoveRightAxis(float Value);
     void TurnAxis(float Value);
     void ScrollAxis(float Value);
+    void UpdateLaser();
     void ToggleMenu();
     void XDown();
     void XUp();
@@ -94,7 +102,22 @@ private:
 };
 
 UCLASS()
-class QUEST3S_TEST_API UHouseVisualButton : public UButton
+class QUEST3S_TEST_API UHouseHoverButton : public UButton
+{
+    GENERATED_BODY()
+public:
+    void SetMenuColors(const FLinearColor& Normal, const FLinearColor& Focus = FLinearColor(0.31f, 0.9f, 0.98f, 1.f));
+private:
+    UFUNCTION() void ShowHover();
+    UFUNCTION() void ClearHover();
+    FLinearColor NormalColor = FLinearColor(0.035f, 0.18f, 0.28f, 1.f);
+    FLinearColor FocusColor = FLinearColor(0.31f, 0.9f, 0.98f, 1.f);
+    bool bHovered = false;
+    bool bHoverEventsBound = false;
+};
+
+UCLASS()
+class QUEST3S_TEST_API UHouseVisualButton : public UHouseHoverButton
 {
     GENERATED_BODY()
 public:
@@ -104,7 +127,7 @@ public:
 };
 
 UCLASS()
-class QUEST3S_TEST_API UHouseFileButton : public UButton
+class QUEST3S_TEST_API UHouseFileButton : public UHouseHoverButton
 {
     GENERATED_BODY()
 public:
@@ -114,7 +137,7 @@ public:
 };
 
 UCLASS()
-class QUEST3S_TEST_API UHouseRemoteButton : public UButton
+class QUEST3S_TEST_API UHouseRemoteButton : public UHouseHoverButton
 {
     GENERATED_BODY()
 public:
@@ -290,7 +313,7 @@ private:
 };
 
 UCLASS()
-class QUEST3S_TEST_API UHouseActionButton : public UButton
+class QUEST3S_TEST_API UHouseActionButton : public UHouseHoverButton
 {
     GENERATED_BODY()
 public:
@@ -320,6 +343,7 @@ private:
     bool bPlaying = false;
     bool bPaused = false;
     bool bMuted = false;
+    float LastPulseTime = -1.f;
 public:
     void SetVoiceState(bool bInVoice, bool bInPlaying, bool bInPaused, bool bInMuted);
     virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;

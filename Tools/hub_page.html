@@ -50,13 +50,14 @@
     <header class="top"><div class="identity"><span class="mark" aria-hidden="true"></span><span>Matrix VR Show</span></div><span class="signal">Hub local / 8765</span></header>
     <section class="hero"><div class="hero-copy"><div class="eyebrow">Biblioteca inmersiva / Quest 3S</div><h1>Explora<br><em>sin límites.</em></h1><p>Envía modelos GLB desde tu computadora y recórrelos dentro del visor. Tus archivos y partidas permanecen en Quest.</p></div></section>
     <div class="grid">
-      <section class="panel" aria-labelledby="upload-title"><span class="index">01 / Ingesta</span><h2 id="upload-title">Añadir un espacio</h2><p>Selecciona un archivo GLB exportado desde 3ds Max. Tamaño máximo: 100 MB.</p><input id="file" type="file" accept=".glb,model/gltf-binary"><button id="upload" type="button">Guardar en biblioteca</button><p id="status" role="status" aria-live="polite"></p></section>
+      <section class="panel" aria-labelledby="upload-title"><span class="index">01 / Ingesta</span><h2 id="upload-title">Añadir un espacio</h2><p>Selecciona un archivo GLB exportado desde 3ds Max. Tamaño máximo: 100 MiB para Quest.</p><input id="file" type="file" accept=".glb,model/gltf-binary"><button id="upload" type="button">Guardar en biblioteca</button><p id="status" role="status" aria-live="polite"></p></section>
       <section class="panel" aria-labelledby="models-title"><span class="index">02 / Archivo</span><h2 id="models-title">Modelos disponibles</h2><ul id="models"></ul></section>
     </div>
     <footer class="foot">En Quest, introduce la dirección de esta computadora en HUB y pulsa <strong>VER MODELOS DE LA LAPTOP</strong>. Con USB y <code>adb reverse tcp:8765 tcp:8765</code>, usa <code>http://127.0.0.1:8765</code>. Escala: 1 m GLB = 1 m VR.</footer>
   </main>
   <script>
     const $ = selector => document.querySelector(selector);
+    const MAX_BYTES = 100 * 1024 * 1024;
     async function refresh() {
       try {
         const response = await fetch('/api/models');
@@ -77,13 +78,23 @@
     $('#upload').onclick = async () => {
       const file = $('#file').files[0];
       if (!file) { $('#status').textContent = 'Selecciona un archivo .glb'; return; }
+      if (!file.name.toLowerCase().endsWith('.glb')) { $('#status').textContent = 'Selecciona un archivo .glb'; return; }
+      if (file.size > MAX_BYTES) {
+        $('#status').textContent = `El GLB ocupa ${(file.size / 1048576).toFixed(1)} MiB. El límite de Quest es 100 MiB: reduce el archivo antes de subirlo.`;
+        return;
+      }
+      if (file.size < 20) { $('#status').textContent = 'El archivo no parece un GLB válido'; return; }
       $('#status').textContent = 'Subiendo…';
       try {
         const response = await fetch('/api/models/' + encodeURIComponent(file.name), { method:'PUT', body:file });
         if (!response.ok) throw new Error(await response.text());
         $('#status').textContent = 'Archivo listo para Quest';
         await refresh();
-      } catch (error) { $('#status').textContent = 'Error: ' + error.message; }
+      } catch (error) {
+        $('#status').textContent = error instanceof TypeError
+          ? 'No se pudo conectar con el hub. Abre http://localhost:8765/ y vuelve a intentarlo.'
+          : 'Error: ' + error.message;
+      }
     };
     refresh();
   </script>

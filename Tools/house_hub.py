@@ -72,7 +72,7 @@ def handler_for(folder: Path):
             except ValueError:
                 length = 0
             if not 20 <= length <= MAX_BYTES:
-                return self.send(413, b"Maximum file size: 100 MB", "text/plain")
+                return self.send(413, b"El limite para Quest es 100 MiB. Reduce el GLB antes de subirlo.", "text/plain")
             data = self.rfile.read(length)
             if not valid_glb(data):
                 return self.send(400, b"Invalid GLB", "text/plain")

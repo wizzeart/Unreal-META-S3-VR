@@ -1,4 +1,5 @@
 #include "HouseSandbox.h"
+#include "HouseVoice.h"
 
 #include "GlbRuntime.h"
 #include "ProceduralMeshComponent.h"
@@ -39,6 +40,10 @@
 #include "Components/HorizontalBox.h"
 #include "Components/Spacer.h"
 #include "Components/CanvasPanel.h"
+#include "Components/AudioComponent.h"
+#include "Components/Image.h"
+#include "Engine/Texture2D.h"
+#include "Sound/SoundWaveProcedural.h"
 #include "Serialization/JsonWriter.h"
 #include "EngineUtils.h"
 #include "Components/InputComponent.h"
@@ -68,6 +73,7 @@ bool IsGlb(const TArray<uint8>& Bytes)
 
 AHouseSandboxGameMode::AHouseSandboxGameMode()
 {
+    PrimaryActorTick.bCanEverTick = true;
     static ConstructorHelpers::FClassFinder<APawn> XRPawn(TEXT("/Game/XRFramework/Blueprints/BP_XRPawn"));
     if (XRPawn.Succeeded()) DefaultPawnClass = XRPawn.Class;
     static ConstructorHelpers::FObjectFinder<UMaterialInterface> Opaque(TEXT("/Game/HouseMaterials/M_HouseLitOpaque.M_HouseLitOpaque"));
@@ -308,6 +314,43 @@ void AHouseSandboxGameMode::BeginPlay()
     MenuWidget->Populate(this);
 }
 
+void AHouseSandboxGameMode::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+    if (Notes.IsEmpty()) return;
+    if (RecordingNote != INDEX_NONE) return;
+    APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    UCameraComponent* Camera = Pawn ? Pawn->FindComponentByClass<UCameraComponent>() : nullptr;
+    if (!Camera) return;
+    const FVector Listener = Camera->GetComponentLocation();
+    for (int32 Index = 0; Index < Notes.Num(); ++Index)
+    {
+        if (!Notes[Index].bVoice || !NoteAudio.IsValidIndex(Index) || !NoteAudio[Index]) continue;
+        const float Distance = FVector::Dist(Listener, Notes[Index].Location);
+        if (VoiceCooldown.IsValidIndex(Index)) VoiceCooldown[Index] = FMath::Max(0.f, VoiceCooldown[Index] - DeltaSeconds);
+        if (VoiceRemaining.IsValidIndex(Index) && VoiceRemaining[Index] > 0.f)
+        {
+            if (Distance > 1200.f || Notes[Index].bMuted)
+            {
+                StopVoicePlayback(Index);
+                continue;
+            }
+            if (!Notes[Index].bPaused)
+            {
+                VoiceRemaining[Index] -= DeltaSeconds;
+                if (VoiceRemaining[Index] <= 0.f)
+                {
+                    StopVoicePlayback(Index);
+                    VoiceCooldown[Index] = 2.f;
+                }
+            }
+        }
+        else if (!Notes[Index].bMuted && !Notes[Index].bPaused && Distance < 950.f
+            && VoiceCooldown.IsValidIndex(Index) && VoiceCooldown[Index] <= 0.f)
+            StartVoicePlayback(Index);
+    }
+}
+
 void AHouseSandboxGameMode::PlaceMenuAtPlayer()
 {
     APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
@@ -396,6 +439,7 @@ void AHouseSandboxGameMode::ShowPanel(EHousePanel Panel)
     {
         MenuWidget->SetVisualMode(Panel == EHousePanel::Visual);
         MenuWidget->SetNotesMode(Panel == EHousePanel::Notes);
+        MenuWidget->SetVoiceMode(Panel == EHousePanel::Voice);
     }
     APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
     UCameraComponent* Camera = Pawn ? Pawn->FindComponentByClass<UCameraComponent>() : nullptr;
@@ -847,8 +891,18 @@ void AHouseSandboxGameMode::ToggleGhost()
 
 void AHouseSandboxGameMode::ClearNotes()
 {
+    if (RecordingNote != INDEX_NONE) HouseVoice::StopRecording();
+    RecordingNote = INDEX_NONE;
+    bStoppingCapture = false;
+    LastCaptureState = -1;
+    PendingVoiceFile.Empty();
+    GetWorldTimerManager().ClearTimer(VoiceCaptureTimer);
     for (AActor* Actor : NoteActors) if (Actor) Actor->Destroy();
     NoteActors.Empty();
+    NoteAudio.Empty();
+    NoteWaves.Empty();
+    VoiceRemaining.Empty();
+    VoiceCooldown.Empty();
     Notes.Empty();
     EditingNote = INDEX_NONE;
 }
@@ -856,7 +910,11 @@ void AHouseSandboxGameMode::ClearNotes()
 void AHouseSandboxGameMode::RebuildNotes()
 {
     for (AActor* Actor : NoteActors) if (Actor) Actor->Destroy();
-    NoteActors.Empty();
+    NoteActors.SetNumZeroed(Notes.Num());
+    NoteAudio.SetNumZeroed(Notes.Num());
+    NoteWaves.SetNumZeroed(Notes.Num());
+    VoiceRemaining.Init(0.f, Notes.Num());
+    VoiceCooldown.Init(0.f, Notes.Num());
     for (int32 Index = 0; Index < Notes.Num(); ++Index)
     {
         AActor* Actor = GetWorld()->SpawnActor<AActor>(Notes[Index].Location, Notes[Index].Rotation);
@@ -879,13 +937,41 @@ void AHouseSandboxGameMode::RebuildNotes()
             View->NoteIndex = Index;
             View->NoteContent = Notes[Index].Text;
             View->Refresh();
+            View->SetVoiceState(Notes[Index].bVoice, false, Notes[Index].bPaused, Notes[Index].bMuted);
             Widget->SetWidget(View);
         }
-        NoteActors.Add(Actor);
+        NoteActors[Index] = Actor;
+        if (Notes[Index].bVoice)
+        {
+            UAudioComponent* Audio = NewObject<UAudioComponent>(Actor);
+            Audio->SetupAttachment(Widget);
+            Audio->bAutoActivate = false;
+            Audio->bAllowSpatialization = true;
+            Audio->bOverrideAttenuation = true;
+            Audio->AttenuationOverrides.bAttenuate = true;
+            Audio->AttenuationOverrides.bSpatialize = true;
+            Audio->AttenuationOverrides.SpatializationAlgorithm = SPATIALIZATION_HRTF;
+            Audio->AttenuationOverrides.AttenuationShape = EAttenuationShape::Sphere;
+            Audio->AttenuationOverrides.AttenuationShapeExtents = FVector(70.f);
+            Audio->AttenuationOverrides.FalloffDistance = 930.f;
+            Audio->RegisterComponent();
+            Audio->SetVolumeMultiplier(1.25f);
+            NoteAudio[Index] = Audio;
+        }
     }
 }
 
 void AHouseSandboxGameMode::StartNewNote()
+{
+    CreateAnchoredNote(false);
+}
+
+void AHouseSandboxGameMode::StartNewVoiceNote()
+{
+    CreateAnchoredNote(true);
+}
+
+void AHouseSandboxGameMode::CreateAnchoredNote(bool bVoice)
 {
     if (!HouseMesh) { SetError(TEXT("Carga una casa antes de crear notas")); return; }
     if (Notes.Num() >= 100) { SetError(TEXT("Limite de 100 notas por partida")); return; }
@@ -903,20 +989,22 @@ void AHouseSandboxGameMode::StartNewNote()
     }
     FHouseNote Note;
     Note.Text = TEXT("");
+    Note.bVoice = bVoice;
     Note.Location = Hit.ImpactPoint + Hit.ImpactNormal * 8.f;
     Note.Rotation = (Start - Note.Location).Rotation();
     Notes.Add(Note);
     EditingNote = Notes.Num() - 1;
     RebuildNotes();
-    ShowPanel(EHousePanel::Notes);
-    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: note added index=%d"), EditingNote);
+    ShowPanel(bVoice ? EHousePanel::Voice : EHousePanel::Notes);
+    if (bVoice) RecordVoiceForEditing();
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: %s note added index=%d"), bVoice ? TEXT("voice") : TEXT("text"), EditingNote);
 }
 
 void AHouseSandboxGameMode::EditNote(int32 Index)
 {
     if (!Notes.IsValidIndex(Index)) return;
     EditingNote = Index;
-    ShowPanel(EHousePanel::Notes);
+    ShowPanel(Notes[Index].bVoice ? EHousePanel::Voice : EHousePanel::Notes);
 }
 
 FString AHouseSandboxGameMode::GetEditingText() const
@@ -926,18 +1014,161 @@ FString AHouseSandboxGameMode::GetEditingText() const
 
 void AHouseSandboxGameMode::SetNoteText(const FString& Text)
 {
-    if (!Notes.IsValidIndex(EditingNote)) return;
+    if (!Notes.IsValidIndex(EditingNote) || Notes[EditingNote].bVoice) return;
     Notes[EditingNote].Text = Text.Left(300);
-    RebuildNotes();
+    if (NoteActors.IsValidIndex(EditingNote) && NoteActors[EditingNote])
+        if (UWidgetComponent* Widget = NoteActors[EditingNote]->FindComponentByClass<UWidgetComponent>())
+            if (UHouseNoteWidget* View = Cast<UHouseNoteWidget>(Widget->GetWidget()))
+            { View->NoteContent = Notes[EditingNote].Text; View->Refresh(); }
 }
 
 void AHouseSandboxGameMode::DeleteNote()
 {
     if (!Notes.IsValidIndex(EditingNote)) return;
+    if (RecordingNote == EditingNote) { SetError(TEXT("Espera a que termine de guardarse el audio")); return; }
     Notes.RemoveAt(EditingNote);
     EditingNote = INDEX_NONE;
     RebuildNotes();
     ShowPanel(EHousePanel::Closed);
+}
+
+void AHouseSandboxGameMode::RecordVoiceForEditing()
+{
+    if (!Notes.IsValidIndex(EditingNote) || !Notes[EditingNote].bVoice || RecordingNote != INDEX_NONE) return;
+    for (int32 Index = 0; Index < Notes.Num(); ++Index) StopVoicePlayback(Index);
+    PendingVoiceFile = FGuid::NewGuid().ToString(EGuidFormats::Digits).ToLower() + TEXT(".wav");
+    const int32 State = HouseVoice::StartRecording(PendingVoiceFile);
+    if (State < 0)
+    {
+        PendingVoiceFile.Empty();
+        SetError(TEXT("No se pudo iniciar el microfono"));
+        return;
+    }
+    RecordingNote = EditingNote;
+    bStoppingCapture = false;
+    LastCaptureState = State;
+    GetWorldTimerManager().SetTimer(VoiceCaptureTimer, this, &AHouseSandboxGameMode::PollVoiceCapture, 0.2f, true);
+    SetError(State == 0 ? TEXT("Acepta el permiso de microfono para grabar") : TEXT("Grabando voz; pulsa DETENER"));
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: voice capture requested index=%d state=%d"), RecordingNote, State);
+}
+
+void AHouseSandboxGameMode::StopVoiceRecording()
+{
+    if (RecordingNote == INDEX_NONE) return;
+    bStoppingCapture = true;
+    HouseVoice::StopRecording();
+    SetError(TEXT("Guardando nota de voz..."));
+}
+
+void AHouseSandboxGameMode::PollVoiceCapture()
+{
+    if (RecordingNote == INDEX_NONE) { GetWorldTimerManager().ClearTimer(VoiceCaptureTimer); return; }
+    const int32 State = HouseVoice::RecordingState();
+    if (State != LastCaptureState)
+    {
+        LastCaptureState = State;
+        if (State == 1) SetError(TEXT("Grabando voz; pulsa DETENER"));
+    }
+    if (State == 0 || State == 1) return;
+    const int32 FinishedNote = RecordingNote;
+    RecordingNote = INDEX_NONE;
+    bStoppingCapture = false;
+    LastCaptureState = -1;
+    GetWorldTimerManager().ClearTimer(VoiceCaptureTimer);
+    if (State == 2 && Notes.IsValidIndex(FinishedNote))
+    {
+        TArray<uint8> Pcm;
+        if (HouseVoice::LoadPcm(GetModelDirectory(), PendingVoiceFile, Pcm))
+        {
+            Notes[FinishedNote].VoiceFile = PendingVoiceFile;
+            Notes[FinishedNote].bPaused = false;
+            Notes[FinishedNote].bMuted = false;
+            RebuildNotes();
+            SetError(TEXT("Nota de voz guardada en la superficie"));
+            UE_LOG(LogTemp, Display, TEXT("HouseSandbox: voice note saved index=%d bytes=%d"), FinishedNote, Pcm.Num());
+        }
+        else SetError(TEXT("La grabacion de voz no se pudo leer"));
+    }
+    else SetError(State == -2 ? TEXT("Permiso de microfono denegado") : TEXT("No se pudo guardar la nota de voz"));
+    PendingVoiceFile.Empty();
+    if (MenuWidget) MenuWidget->Populate(this);
+}
+
+FString AHouseSandboxGameMode::GetVoiceStatus() const
+{
+    if (!Notes.IsValidIndex(EditingNote) || !Notes[EditingNote].bVoice) return TEXT("");
+    if (RecordingNote == EditingNote)
+        return bStoppingCapture ? TEXT("Guardando audio...") : HouseVoice::RecordingState() == 0
+            ? TEXT("Esperando permiso de microfono...") : TEXT("GRABANDO  |  maximo 30 segundos");
+    const FHouseNote& Note = Notes[EditingNote];
+    if (Note.VoiceFile.IsEmpty()) return TEXT("Pulsa GRABAR para dejar un audio aqui");
+    if (Note.bMuted) return TEXT("SILENCIADA");
+    if (Note.bPaused) return TEXT("EN PAUSA");
+    return TEXT("Audio espacial activo cerca de esta nota");
+}
+
+void AHouseSandboxGameMode::ToggleVoicePause()
+{
+    if (!Notes.IsValidIndex(EditingNote) || !Notes[EditingNote].bVoice || RecordingNote != INDEX_NONE) return;
+    FHouseNote& Note = Notes[EditingNote];
+    Note.bPaused = !Note.bPaused;
+    if (NoteAudio.IsValidIndex(EditingNote) && NoteAudio[EditingNote] && VoiceRemaining.IsValidIndex(EditingNote)
+        && VoiceRemaining[EditingNote] > 0.f) NoteAudio[EditingNote]->SetPaused(Note.bPaused);
+    UpdateVoiceMarker(EditingNote);
+    if (MenuWidget) MenuWidget->Populate(this);
+}
+
+void AHouseSandboxGameMode::ToggleVoiceMute()
+{
+    if (!Notes.IsValidIndex(EditingNote) || !Notes[EditingNote].bVoice || RecordingNote != INDEX_NONE) return;
+    FHouseNote& Note = Notes[EditingNote];
+    Note.bMuted = !Note.bMuted;
+    if (Note.bMuted) StopVoicePlayback(EditingNote);
+    UpdateVoiceMarker(EditingNote);
+    if (MenuWidget) MenuWidget->Populate(this);
+}
+
+void AHouseSandboxGameMode::StartVoicePlayback(int32 Index)
+{
+    if (!Notes.IsValidIndex(Index) || !NoteAudio.IsValidIndex(Index) || !NoteAudio[Index]
+        || Notes[Index].VoiceFile.IsEmpty()) return;
+    TArray<uint8> Pcm;
+    if (!HouseVoice::LoadPcm(GetModelDirectory(), Notes[Index].VoiceFile, Pcm))
+    {
+        VoiceCooldown[Index] = 30.f;
+        UE_LOG(LogTemp, Warning, TEXT("HouseSandbox: missing or invalid voice file %s"), *Notes[Index].VoiceFile);
+        return;
+    }
+    USoundWaveProcedural* Wave = NewObject<USoundWaveProcedural>(NoteAudio[Index]);
+    Wave->SetSampleRate(HouseVoice::SampleRate);
+    Wave->SetNumFrames(Pcm.Num() / 2);
+    Wave->NumChannels = 1;
+    Wave->Duration = float(Pcm.Num()) / (HouseVoice::SampleRate * 2.f);
+    Wave->SoundGroup = SOUNDGROUP_Voice;
+    Wave->QueueAudio(Pcm.GetData(), Pcm.Num());
+    NoteWaves[Index] = Wave;
+    NoteAudio[Index]->SetSound(Wave);
+    NoteAudio[Index]->Play();
+    VoiceRemaining[Index] = Wave->Duration;
+    UpdateVoiceMarker(Index);
+}
+
+void AHouseSandboxGameMode::StopVoicePlayback(int32 Index)
+{
+    if (!VoiceRemaining.IsValidIndex(Index)) return;
+    if (NoteAudio.IsValidIndex(Index) && NoteAudio[Index]) NoteAudio[Index]->Stop();
+    VoiceRemaining[Index] = 0.f;
+    if (NoteWaves.IsValidIndex(Index)) NoteWaves[Index] = nullptr;
+    UpdateVoiceMarker(Index);
+}
+
+void AHouseSandboxGameMode::UpdateVoiceMarker(int32 Index)
+{
+    if (!Notes.IsValidIndex(Index) || !NoteActors.IsValidIndex(Index) || !NoteActors[Index]) return;
+    if (UWidgetComponent* Widget = NoteActors[Index]->FindComponentByClass<UWidgetComponent>())
+        if (UHouseNoteWidget* View = Cast<UHouseNoteWidget>(Widget->GetWidget()))
+            View->SetVoiceState(Notes[Index].bVoice, VoiceRemaining.IsValidIndex(Index) && VoiceRemaining[Index] > 0.f
+                && !Notes[Index].bPaused && !Notes[Index].bMuted, Notes[Index].bPaused, Notes[Index].bMuted);
 }
 
 TArray<FString> AHouseSandboxGameMode::GetSaveSlots() const
@@ -952,6 +1183,10 @@ TArray<FString> AHouseSandboxGameMode::GetSaveSlots() const
 void AHouseSandboxGameMode::SaveGame(const FString& Slot)
 {
     if (CurrentHouseFile.IsEmpty()) { SetError(TEXT("Carga una casa antes de guardar")); return; }
+    if (RecordingNote != INDEX_NONE) { SetError(TEXT("Deten la grabacion antes de guardar")); return; }
+    for (const FHouseNote& Note : Notes)
+        if (Note.bVoice && Note.VoiceFile.IsEmpty())
+        { SetError(TEXT("Termina de grabar cada nota de voz antes de guardar")); return; }
     bool bValidSlot = !Slot.IsEmpty() && Slot.Len() <= 40;
     for (TCHAR C : Slot) bValidSlot &= FChar::IsAlnum(C) || C == TEXT('_');
     if (!bValidSlot)
@@ -959,7 +1194,7 @@ void AHouseSandboxGameMode::SaveGame(const FString& Slot)
     APawn* Pawn = UGameplayStatics::GetPlayerPawn(this, 0);
     if (!Pawn) return;
     TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
-    Json->SetNumberField(TEXT("version"), 1);
+    Json->SetNumberField(TEXT("version"), 2);
     Json->SetStringField(TEXT("model"), CurrentHouseFile);
     const FVector P = Pawn->GetActorLocation();
     Json->SetNumberField(TEXT("x"), P.X); Json->SetNumberField(TEXT("y"), P.Y); Json->SetNumberField(TEXT("z"), P.Z);
@@ -969,6 +1204,13 @@ void AHouseSandboxGameMode::SaveGame(const FString& Slot)
     {
         TSharedRef<FJsonObject> N = MakeShared<FJsonObject>();
         N->SetStringField(TEXT("text"), Note.Text);
+        if (Note.bVoice)
+        {
+            N->SetStringField(TEXT("kind"), TEXT("voice"));
+            N->SetStringField(TEXT("voice"), Note.VoiceFile);
+            N->SetBoolField(TEXT("paused"), Note.bPaused);
+            N->SetBoolField(TEXT("muted"), Note.bMuted);
+        }
         N->SetNumberField(TEXT("x"), Note.Location.X); N->SetNumberField(TEXT("y"), Note.Location.Y); N->SetNumberField(TEXT("z"), Note.Location.Z);
         N->SetNumberField(TEXT("pitch"), Note.Rotation.Pitch); N->SetNumberField(TEXT("yaw"), Note.Rotation.Yaw);
         SavedNotes.Add(MakeShared<FJsonValueObject>(N));
@@ -994,7 +1236,7 @@ void AHouseSandboxGameMode::LoadGame(const FString& Slot)
     TSharedPtr<FJsonObject> Json;
     double Version = 0;
     if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Contents), Json) || !Json.IsValid()
-        || !Json->TryGetNumberField(TEXT("version"), Version) || Version != 1)
+        || !Json->TryGetNumberField(TEXT("version"), Version) || (Version != 1 && Version != 2))
     { SetError(TEXT("Partida incompatible")); return; }
     FString Model;
     if (!Json->TryGetStringField(TEXT("model"), Model) || !LoadHouse(Model)) return;
@@ -1017,6 +1259,17 @@ void AHouseSandboxGameMode::LoadGame(const FString& Slot)
             FHouseNote Note;
             double X = 0, Y = 0, Z = 0, Pitch = 0, Yaw = 0;
             N->TryGetStringField(TEXT("text"), Note.Text);
+            FString Kind;
+            N->TryGetStringField(TEXT("kind"), Kind);
+            if (Kind == TEXT("voice"))
+            {
+                Note.bVoice = true;
+                N->TryGetStringField(TEXT("voice"), Note.VoiceFile);
+                if (!HouseVoice::IsValidName(Note.VoiceFile)
+                    || !IFileManager::Get().FileExists(*HouseVoice::FilePath(GetModelDirectory(), Note.VoiceFile))) continue;
+                N->TryGetBoolField(TEXT("paused"), Note.bPaused);
+                N->TryGetBoolField(TEXT("muted"), Note.bMuted);
+            }
             N->TryGetNumberField(TEXT("x"), X); N->TryGetNumberField(TEXT("y"), Y); N->TryGetNumberField(TEXT("z"), Z);
             N->TryGetNumberField(TEXT("pitch"), Pitch); N->TryGetNumberField(TEXT("yaw"), Yaw);
             if (!FMath::IsFinite(X) || !FMath::IsFinite(Y) || !FMath::IsFinite(Z)) continue;
@@ -1059,23 +1312,73 @@ void UHouseActionButton::Activate()
 bool UHouseNoteWidget::Initialize()
 {
     if (!Super::Initialize()) return false;
+    Outline = WidgetTree->ConstructWidget<UBorder>();
+    Outline->SetPadding(FMargin(5.f));
+    Outline->SetBrushColor(CyberCyan);
     NoteButton = WidgetTree->ConstructWidget<UHouseActionButton>();
     NoteButton->Value = TEXT("note");
-    NoteButton->SetBackgroundColor(CyberCyan);
+    NoteButton->SetBackgroundColor(CyberAction);
+    UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+    SpeakerIcon = WidgetTree->ConstructWidget<UImage>();
+    SpeakerIcon->SetDesiredSizeOverride(FVector2D(60.f, 60.f));
+    SpeakerIcon->SetVisibility(ESlateVisibility::Collapsed);
+    SpeakerTexture = UTexture2D::CreateTransient(64, 64, PF_B8G8R8A8);
+    if (SpeakerTexture && SpeakerTexture->GetPlatformData() && SpeakerTexture->GetPlatformData()->Mips.Num())
+    {
+        FTexture2DMipMap& Mip = SpeakerTexture->GetPlatformData()->Mips[0];
+        FColor* Pixels = static_cast<FColor*>(Mip.BulkData.Lock(LOCK_READ_WRITE));
+        for (int32 Y = 0; Y < 64; ++Y) for (int32 X = 0; X < 64; ++X)
+        {
+            const bool Body = X >= 8 && X <= 20 && Y >= 25 && Y <= 39;
+            const bool Cone = X > 20 && X <= 35 && FMath::Abs(Y - 32) <= 7 + (X - 20) * 0.8f;
+            const float Radius = FMath::Sqrt(FMath::Square(float(X - 28)) + FMath::Square(float(Y - 32)));
+            const bool SoundArc = X > 38 && (FMath::Abs(Radius - 20.f) < 2.f || FMath::Abs(Radius - 30.f) < 2.f);
+            Pixels[Y * 64 + X] = Body || Cone || SoundArc ? FColor(79, 230, 250, 255) : FColor(0, 0, 0, 0);
+        }
+        Mip.BulkData.Unlock();
+        SpeakerTexture->UpdateResource();
+        SpeakerIcon->SetBrushFromTexture(SpeakerTexture);
+    }
+    Row->AddChildToHorizontalBox(SpeakerIcon);
     Label = WidgetTree->ConstructWidget<UTextBlock>();
     FSlateFontInfo Font = Label->GetFont(); Font.Size = 30; Label->SetFont(Font);
-    Label->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
+    Label->SetColorAndOpacity(FSlateColor(CyberText));
     Label->SetAutoWrapText(true);
-    NoteButton->AddChild(Label);
+    Row->AddChildToHorizontalBox(Label);
+    NoteButton->AddChild(Row);
     NoteButton->OnClicked.AddDynamic(NoteButton, &UHouseActionButton::Activate);
-    WidgetTree->RootWidget = NoteButton;
+    Outline->SetContent(NoteButton);
+    WidgetTree->RootWidget = Outline;
     return true;
 }
 
 void UHouseNoteWidget::Refresh()
 {
     if (NoteButton) { NoteButton->ParentMenu = ParentMenu; NoteButton->Index = NoteIndex; }
-    if (Label) Label->SetText(FText::FromString(NoteContent.IsEmpty() ? TEXT("(nota vacia)") : NoteContent));
+    if (Label && !bVoice) Label->SetText(FText::FromString(NoteContent.IsEmpty() ? TEXT("(nota vacia)") : NoteContent));
+}
+
+void UHouseNoteWidget::SetVoiceState(bool bInVoice, bool bInPlaying, bool bInPaused, bool bInMuted)
+{
+    bVoice = bInVoice;
+    bPlaying = bInPlaying;
+    bPaused = bInPaused;
+    bMuted = bInMuted;
+    if (SpeakerIcon) SpeakerIcon->SetVisibility(bVoice ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+    if (Label && bVoice) Label->SetText(FText::FromString(bPlaying ? TEXT("REPRODUCIENDO")
+        : bMuted ? TEXT("AUDIO SILENCIADO") : bPaused ? TEXT("AUDIO EN PAUSA") : TEXT("NOTA DE VOZ")));
+    if (Outline) Outline->SetBrushColor(bPlaying ? CyberMagenta : bMuted ? CyberBackground : CyberCyan);
+}
+
+void UHouseNoteWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+    Super::NativeTick(MyGeometry, InDeltaTime);
+    if (bPlaying && Outline)
+    {
+        const float Pulse = 0.7f + 0.3f * FMath::Sin(GetWorld()->GetTimeSeconds() * 7.f);
+        Outline->SetBrushColor(FLinearColor(CyberMagenta.R * Pulse, CyberMagenta.G * Pulse,
+            CyberMagenta.B * Pulse, 1.f));
+    }
 }
 
 bool UHouseSandboxWidget::Initialize()
@@ -1146,6 +1449,9 @@ bool UHouseSandboxWidget::Initialize()
     NotesPanel = WidgetTree->ConstructWidget<UVerticalBox>();
     ContentScroll->AddChild(NotesPanel);
     NotesPanel->SetVisibility(ESlateVisibility::Collapsed);
+    VoicePanel = WidgetTree->ConstructWidget<UVerticalBox>();
+    ContentScroll->AddChild(VoicePanel);
+    VoicePanel->SetVisibility(ESlateVisibility::Collapsed);
     AddText(LibraryPanel, TEXT("HUB DE LA LAPTOP"), 30);
     HubBox = WidgetTree->ConstructWidget<UEditableTextBox>();
     HubBox->SetText(FText::FromString(TEXT("http://127.0.0.1:8765")));
@@ -1179,6 +1485,8 @@ bool UHouseSandboxWidget::Initialize()
     LibraryPanel->AddChildToVerticalBox(SaveList);
     UButton* NewNote = AddButton(LibraryPanel, TEXT("CREAR NOTA EN LA SUPERFICIE QUE MIRO"), TEXT("NewNote"));
     NewNote->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnNewNote);
+    UButton* NewVoice = AddButton(LibraryPanel, TEXT("GRABAR NOTA DE VOZ EN LA SUPERFICIE QUE MIRO"), TEXT("NewVoiceNote"));
+    NewVoice->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnNewVoiceNote);
     UButton* Ghost = AddButton(LibraryPanel, TEXT("VUELO FANTASMA"), TEXT("Ghost"));
     Ghost->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnToggleGhost);
     GhostLabel = Cast<UTextBlock>(Ghost->GetContent());
@@ -1258,6 +1566,23 @@ bool UHouseSandboxWidget::Initialize()
     Delete->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnDeleteNote);
     UButton* Done = AddButton(NotesPanel, TEXT("LISTO"), TEXT("DoneNote"));
     Done->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnClose);
+    AddText(VoicePanel, TEXT("NOTA DE VOZ ESPACIAL"), 34);
+    VoiceStatus = AddText(VoicePanel, TEXT("Pulsa GRABAR"), 27);
+    AddText(VoicePanel, TEXT("Se oye desde esta superficie al acercarte. Maximo 30 segundos."), 23);
+    UButton* Record = AddButton(VoicePanel, TEXT("GRABAR / VOLVER A GRABAR"), TEXT("RecordVoice"));
+    Record->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnRecordVoice);
+    UButton* Stop = AddButton(VoicePanel, TEXT("DETENER Y GUARDAR AUDIO"), TEXT("StopVoice"));
+    Stop->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnStopVoice);
+    UButton* Pause = AddButton(VoicePanel, TEXT("PAUSAR AUDIO"), TEXT("PauseVoice"));
+    Pause->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnPauseVoice);
+    VoicePauseLabel = Cast<UTextBlock>(Pause->GetContent());
+    UButton* Mute = AddButton(VoicePanel, TEXT("SILENCIAR AUDIO"), TEXT("MuteVoice"));
+    Mute->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnMuteVoice);
+    VoiceMuteLabel = Cast<UTextBlock>(Mute->GetContent());
+    UButton* DeleteVoice = AddButton(VoicePanel, TEXT("ELIMINAR NOTA DE VOZ"), TEXT("DeleteVoice"));
+    DeleteVoice->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnDeleteNote);
+    UButton* DoneVoice = AddButton(VoicePanel, TEXT("LISTO"), TEXT("DoneVoice"));
+    DoneVoice->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnClose);
     UButton* Recenter = AddButton(Frame, TEXT("RECOLOCAR PANEL DELANTE DE MÍ"), TEXT("RecenterPanel"));
     Recenter->OnClicked.AddDynamic(this, &UHouseSandboxWidget::OnRecenter);
     UButton* Close = AddButton(Frame, TEXT("CERRAR  ·  X PARA ABRIR  ·  X+Y VISUALES  ·  A+B MODELOS"), TEXT("ClosePanel"));
@@ -1315,6 +1640,7 @@ void UHouseSandboxWidget::Populate(AHouseSandboxGameMode* Owner)
     if (SunLabel) SunLabel->SetText(FText::FromString(Sandbox->IsSunOn() ? TEXT("LUZ SOL: ACTIVA") : TEXT("LUZ SOL: APAGADA")));
     if (ContentScroll) ContentScroll->SetScrollOffset(PreviousScroll);
     UpdateVisualLabels();
+    RefreshVoiceEditor();
 }
 
 void UHouseSandboxWidget::SetVisualMode(bool bVisual)
@@ -1337,6 +1663,16 @@ void UHouseSandboxWidget::SetNotesMode(bool bNotes)
     if (bNotes && VisualPanel) VisualPanel->SetVisibility(ESlateVisibility::Collapsed);
     if (NotesPanel) NotesPanel->SetVisibility(bNotes ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
     if (bNotes) RefreshNoteEditor();
+}
+
+void UHouseSandboxWidget::SetVoiceMode(bool bVoice)
+{
+    if (bVoice && LibraryPanel) LibraryPanel->SetVisibility(ESlateVisibility::Collapsed);
+    if (bVoice && VisualPanel) VisualPanel->SetVisibility(ESlateVisibility::Collapsed);
+    if (bVoice && NotesPanel) NotesPanel->SetVisibility(ESlateVisibility::Collapsed);
+    if (VoicePanel) VoicePanel->SetVisibility(bVoice ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+    if (bVoice && ContentScroll) ContentScroll->SetScrollOffset(0.f);
+    if (bVoice) RefreshVoiceEditor();
 }
 
 void UHouseSandboxWidget::ScrollBy(float Amount)
@@ -1390,6 +1726,13 @@ void UHouseSandboxWidget::RefreshNoteEditor()
 {
     if (NoteText && Sandbox) NoteText->SetText(FText::FromString(Sandbox->GetEditingText()));
 }
+void UHouseSandboxWidget::RefreshVoiceEditor()
+{
+    if (!Sandbox) return;
+    if (VoiceStatus) VoiceStatus->SetText(FText::FromString(Sandbox->GetVoiceStatus()));
+    if (VoicePauseLabel) VoicePauseLabel->SetText(FText::FromString(TEXT("PAUSAR / REANUDAR AUDIO")));
+    if (VoiceMuteLabel) VoiceMuteLabel->SetText(FText::FromString(TEXT("SILENCIAR / ACTIVAR AUDIO")));
+}
 void UHouseSandboxWidget::TypeNoteCharacter(const FString& Character)
 {
     if (!Sandbox) return;
@@ -1400,6 +1743,11 @@ void UHouseSandboxWidget::TypeNoteCharacter(const FString& Character)
     RefreshNoteEditor();
 }
 void UHouseSandboxWidget::OnNewNote() { if (Sandbox) Sandbox->StartNewNote(); }
+void UHouseSandboxWidget::OnNewVoiceNote() { if (Sandbox) Sandbox->StartNewVoiceNote(); }
+void UHouseSandboxWidget::OnRecordVoice() { if (Sandbox) Sandbox->RecordVoiceForEditing(); }
+void UHouseSandboxWidget::OnStopVoice() { if (Sandbox) Sandbox->StopVoiceRecording(); }
+void UHouseSandboxWidget::OnPauseVoice() { if (Sandbox) Sandbox->ToggleVoicePause(); }
+void UHouseSandboxWidget::OnMuteVoice() { if (Sandbox) Sandbox->ToggleVoiceMute(); }
 void UHouseSandboxWidget::OnSave() { if (Sandbox && SlotBox) Sandbox->SaveGame(SlotBox->GetText().ToString().TrimStartAndEnd()); }
 void UHouseSandboxWidget::OnDeleteNote() { if (Sandbox) Sandbox->DeleteNote(); }
 void UHouseSandboxWidget::OnToggleGhost() { if (Sandbox) Sandbox->ToggleGhost(); }

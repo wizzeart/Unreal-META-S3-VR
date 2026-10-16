@@ -22,14 +22,23 @@ class UInputMappingContext;
 class ADirectionalLight;
 class ASkyLight;
 class UTextureCube;
+class UAudioComponent;
+class USoundWaveProcedural;
+class UImage;
+class UBorder;
+class UTexture2D;
 
-enum class EHousePanel : uint8 { Closed, Library, Visual, Notes };
+enum class EHousePanel : uint8 { Closed, Library, Visual, Notes, Voice };
 
 struct FHouseNote
 {
     FString Text;
+    FString VoiceFile;
     FVector Location = FVector::ZeroVector;
     FRotator Rotation = FRotator::ZeroRotator;
+    bool bVoice = false;
+    bool bPaused = false;
+    bool bMuted = false;
 };
 
 struct FHouseVisualSettings
@@ -121,6 +130,7 @@ class QUEST3S_TEST_API AHouseSandboxGameMode : public AGameModeBase
 public:
     AHouseSandboxGameMode();
     virtual void BeginPlay() override;
+    virtual void Tick(float DeltaSeconds) override;
     UFUNCTION(BlueprintCallable, Category="House Sandbox") bool LoadHouse(const FString& FileName);
     UFUNCTION(BlueprintCallable, Category="House Sandbox") void DownloadHouse(const FString& Url);
     void FetchHubModels(const FString& HubAddress);
@@ -140,9 +150,16 @@ public:
     bool IsGhost() const { return bGhost; }
     bool IsSunOn() const { return bSunOn; }
     void StartNewNote();
+    void StartNewVoiceNote();
     void EditNote(int32 Index);
     void SetNoteText(const FString& Text);
     void DeleteNote();
+    void RecordVoiceForEditing();
+    void StopVoiceRecording();
+    void ToggleVoicePause();
+    void ToggleVoiceMute();
+    bool IsVoiceRecording() const { return RecordingNote != INDEX_NONE; }
+    FString GetVoiceStatus() const;
     void SaveGame(const FString& Slot);
     void LoadGame(const FString& Slot);
     TArray<FString> GetSaveSlots() const;
@@ -178,12 +195,26 @@ private:
     FString CurrentHouseFile;
     TArray<FHouseNote> Notes;
     UPROPERTY() TArray<TObjectPtr<AActor>> NoteActors;
+    UPROPERTY() TArray<TObjectPtr<UAudioComponent>> NoteAudio;
+    UPROPERTY() TArray<TObjectPtr<USoundWaveProcedural>> NoteWaves;
+    TArray<float> VoiceRemaining;
+    TArray<float> VoiceCooldown;
     bool bGhost = false;
     bool bSunOn = true;
     int32 EditingNote = INDEX_NONE;
+    int32 RecordingNote = INDEX_NONE;
+    bool bStoppingCapture = false;
+    int32 LastCaptureState = -1;
+    FString PendingVoiceFile;
+    FTimerHandle VoiceCaptureTimer;
     void SetError(const FString& Message);
     void RebuildNotes();
     void ClearNotes();
+    void CreateAnchoredNote(bool bVoice);
+    void PollVoiceCapture();
+    void StartVoicePlayback(int32 Index);
+    void StopVoicePlayback(int32 Index);
+    void UpdateVoiceMarker(int32 Index);
     void PlaceMenuAtPlayer();
     void HideTemplateGeometry();
     void ApplyVisualSettings(bool bSave = true);
@@ -206,6 +237,7 @@ public:
     void SetRemoteModels(const TArray<TPair<FString, FString>>& Models);
     void SetVisualMode(bool bVisual);
     void SetNotesMode(bool bNotes);
+    void SetVoiceMode(bool bVoice);
     void UpdateVisualLabels();
     void ActivateVisualControl(int32 Feature);
     void ScrollBy(float Amount);
@@ -218,6 +250,10 @@ private:
     UPROPERTY() TObjectPtr<UVerticalBox> LibraryPanel;
     UPROPERTY() TObjectPtr<UVerticalBox> VisualPanel;
     UPROPERTY() TObjectPtr<UVerticalBox> NotesPanel;
+    UPROPERTY() TObjectPtr<UVerticalBox> VoicePanel;
+    UPROPERTY() TObjectPtr<UTextBlock> VoiceStatus;
+    UPROPERTY() TObjectPtr<UTextBlock> VoicePauseLabel;
+    UPROPERTY() TObjectPtr<UTextBlock> VoiceMuteLabel;
     UPROPERTY() TObjectPtr<UVerticalBox> SaveList;
     UPROPERTY() TObjectPtr<UTextBlock> GhostLabel;
     UPROPERTY() TObjectPtr<UTextBlock> SunLabel;
@@ -240,11 +276,17 @@ private:
     UFUNCTION() void OnShowVisual();
     UFUNCTION() void OnRecenter();
     UFUNCTION() void OnNewNote();
+    UFUNCTION() void OnNewVoiceNote();
+    UFUNCTION() void OnRecordVoice();
+    UFUNCTION() void OnStopVoice();
+    UFUNCTION() void OnPauseVoice();
+    UFUNCTION() void OnMuteVoice();
     UFUNCTION() void OnSave();
     UFUNCTION() void OnDeleteNote();
     UFUNCTION() void OnToggleGhost();
     UFUNCTION() void OnToggleSun();
     void RefreshNoteEditor();
+    void RefreshVoiceEditor();
 };
 
 UCLASS()
@@ -271,4 +313,14 @@ public:
 private:
     UPROPERTY() TObjectPtr<UHouseActionButton> NoteButton;
     UPROPERTY() TObjectPtr<UTextBlock> Label;
+    UPROPERTY() TObjectPtr<UBorder> Outline;
+    UPROPERTY() TObjectPtr<UImage> SpeakerIcon;
+    UPROPERTY() TObjectPtr<UTexture2D> SpeakerTexture;
+    bool bVoice = false;
+    bool bPlaying = false;
+    bool bPaused = false;
+    bool bMuted = false;
+public:
+    void SetVoiceState(bool bInVoice, bool bInPlaying, bool bInPaused, bool bInMuted);
+    virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 };

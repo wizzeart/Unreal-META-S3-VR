@@ -1150,6 +1150,8 @@ void AHouseSandboxGameMode::StartVoicePlayback(int32 Index)
     NoteAudio[Index]->SetSound(Wave);
     NoteAudio[Index]->Play();
     VoiceRemaining[Index] = Wave->Duration;
+    UE_LOG(LogTemp, Display, TEXT("HouseSandbox: voice playback index=%d duration=%.2f queued=%d playing=%d"),
+        Index, Wave->Duration, Wave->GetAvailableAudioByteCount(), NoteAudio[Index]->IsPlaying() ? 1 : 0);
     UpdateVoiceMarker(Index);
 }
 

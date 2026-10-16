@@ -2,10 +2,100 @@
 <root xmlns:android="http://schemas.android.com/apk/res/android">
   <androidManifestUpdates>
     <addPermission android:name="android.permission.INTERNET"/>
+    <addPermission android:name="android.permission.RECORD_AUDIO"/>
     <addAttribute tag="application" name="android:usesCleartextTraffic" value="true"/>
   </androidManifestUpdates>
   <gameActivityClassAdditions>
     <insert><![CDATA[
+    private volatile int houseVoiceState = 0;
+    private volatile boolean houseVoiceKeepRecording = false;
+    private volatile String houseVoicePendingName = null;
+    private static final int HOUSE_VOICE_PERMISSION = 43128;
+
+    public synchronized int AndroidThunkJava_StartHouseVoice(String name) {
+        if (houseVoiceState == 1 || name == null || !name.matches("[0-9a-f]{32}\\.wav")) return -1;
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            houseVoicePendingName = name;
+            houseVoiceState = 0;
+            runOnUiThread(() -> requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO}, HOUSE_VOICE_PERMISSION));
+            return 0;
+        }
+        return AndroidThunkJava_BeginHouseVoice(name);
+    }
+
+    private synchronized int AndroidThunkJava_BeginHouseVoice(String name) {
+        try {
+            final int rate = 16000;
+            final int min = android.media.AudioRecord.getMinBufferSize(rate,
+                android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT);
+            if (min <= 0) throw new java.io.IOException("Microphone buffer unavailable");
+            final android.media.AudioRecord recorder = new android.media.AudioRecord(
+                android.media.MediaRecorder.AudioSource.MIC, rate,
+                android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT,
+                Math.max(min, 4096));
+            if (recorder.getState() != android.media.AudioRecord.STATE_INITIALIZED) {
+                recorder.release();
+                throw new java.io.IOException("Microphone not initialized");
+            }
+            recorder.startRecording();
+            houseVoiceKeepRecording = true;
+            houseVoiceState = 1;
+            final java.io.File folder = new java.io.File(getExternalFilesDir(null), "Houses/Voice");
+            final java.io.File target = new java.io.File(folder, name);
+            new Thread(() -> {
+                java.io.ByteArrayOutputStream pcm = new java.io.ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                long started = android.os.SystemClock.elapsedRealtime();
+                try {
+                    while (houseVoiceKeepRecording && pcm.size() < rate * 2 * 30
+                        && android.os.SystemClock.elapsedRealtime() - started < 30000) {
+                        int count = recorder.read(buffer, 0, buffer.length);
+                        if (count < 0) throw new java.io.IOException("Microphone read failed: " + count);
+                        if (count > 0) pcm.write(buffer, 0, Math.min(count, rate * 2 * 30 - pcm.size()));
+                    }
+                    if (pcm.size() < 3200) throw new java.io.IOException("Recording too short");
+                    folder.mkdirs();
+                    java.io.File temporary = new java.io.File(folder, name + ".tmp");
+                    try (java.io.DataOutputStream out = new java.io.DataOutputStream(new java.io.FileOutputStream(temporary))) {
+                        int bytes = pcm.size() & ~1;
+                        out.writeBytes("RIFF"); out.writeInt(Integer.reverseBytes(bytes + 36));
+                        out.writeBytes("WAVEfmt "); out.writeInt(Integer.reverseBytes(16));
+                        out.writeShort(Short.reverseBytes((short)1));
+                        out.writeShort(Short.reverseBytes((short)1));
+                        out.writeInt(Integer.reverseBytes(rate));
+                        out.writeInt(Integer.reverseBytes(rate * 2));
+                        out.writeShort(Short.reverseBytes((short)2));
+                        out.writeShort(Short.reverseBytes((short)16));
+                        out.writeBytes("data"); out.writeInt(Integer.reverseBytes(bytes));
+                        out.write(pcm.toByteArray(), 0, bytes);
+                    }
+                    if (!temporary.renameTo(target)) throw new java.io.IOException("Cannot save voice note");
+                    houseVoiceState = 2;
+                    android.util.Log.i("HouseSandbox", "Voice note saved " + name);
+                } catch (Exception error) {
+                    houseVoiceState = -1;
+                    android.util.Log.e("HouseSandbox", "Voice note recording failed", error);
+                } finally {
+                    try { recorder.stop(); } catch (Exception ignored) {}
+                    recorder.release();
+                    houseVoiceKeepRecording = false;
+                }
+            }, "HouseVoiceRecorder").start();
+            return 1;
+        } catch (Exception error) {
+            houseVoiceState = -1;
+            android.util.Log.e("HouseSandbox", "Cannot start voice recording", error);
+            return -1;
+        }
+    }
+
+    public void AndroidThunkJava_StopHouseVoice() {
+        houseVoicePendingName = null;
+        houseVoiceKeepRecording = false;
+        if (houseVoiceState == 0) houseVoiceState = -3;
+    }
+    public int AndroidThunkJava_GetHouseVoiceState() { return houseVoiceState; }
+
     public void AndroidThunkJava_OpenHousePicker() {
         runOnUiThread(() -> {
             android.content.Intent pick = new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT);
@@ -16,6 +106,17 @@
     }
     ]]></insert>
   </gameActivityClassAdditions>
+  <gameActivityOnRequestPermissionsResultAdditions>
+    <insert><![CDATA[
+    if (requestCode == HOUSE_VOICE_PERMISSION && houseVoicePendingName != null) {
+        String name = houseVoicePendingName;
+        houseVoicePendingName = null;
+        if (grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED)
+            AndroidThunkJava_BeginHouseVoice(name);
+        else houseVoiceState = -2;
+    }
+    ]]></insert>
+  </gameActivityOnRequestPermissionsResultAdditions>
   <gameActivityOnActivityResultAdditions>
     <insert><![CDATA[
     if (requestCode == 43127 && resultCode == android.app.Activity.RESULT_OK && data != null && data.getData() != null) {

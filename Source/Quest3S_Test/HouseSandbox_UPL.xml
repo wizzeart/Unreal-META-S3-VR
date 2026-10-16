@@ -143,7 +143,7 @@
                     int count;
                     while ((count = input.read(buffer)) != -1) {
                         total += count;
-                        if (total > 100L * 1024L * 1024L) throw new java.io.IOException("GLB too large");
+                        if (total > 150L * 1024L * 1024L) throw new java.io.IOException("GLB too large");
                         output.write(buffer, 0, count);
                     }
                 } catch (Exception error) {

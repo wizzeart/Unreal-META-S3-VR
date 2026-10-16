@@ -7,7 +7,7 @@ import json
 import struct
 from pathlib import Path
 
-LIMITE_ARCHIVO = 100 * 1024 * 1024
+LIMITE_ARCHIVO = 150 * 1024 * 1024
 LIMITE_TRIANGULOS = 350_000
 
 
@@ -39,7 +39,7 @@ def auditar(ruta: Path) -> bool:
         return False
 
     if tamano > LIMITE_ARCHIVO:
-        problemas.append("supera 100 MiB")
+        problemas.append("supera 150 MiB")
     if documento.get("asset", {}).get("version") != "2.0":
         problemas.append("asset.version no es 2.0")
 

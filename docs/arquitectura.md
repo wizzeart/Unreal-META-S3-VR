@@ -42,7 +42,7 @@ La configuración contiene opciones generales de Unreal como MSAA móvil, pero a
 
 | Recurso | Límite actual | Código |
 | --- | ---: | --- |
-| Archivo GLB | 100 MiB | `HouseSandbox.cpp` y `house_hub.py` |
+| Archivo GLB | 150 MiB | `HouseSandbox.cpp`, `HouseSandbox_UPL.xml` y `house_hub.py` |
 | Triángulos renderizados | 350 000, incluidas caras duplicadas | `GlbRuntime.cpp` |
 | Texturas descomprimidas | 128 MiB por importación | `GlbRuntime.cpp` |
 | Dimensión de imagen de entrada | 4096 px por lado | `GlbRuntime.cpp` |

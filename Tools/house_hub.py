@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
-MAX_BYTES = 100 * 1024 * 1024
+MAX_BYTES = 150 * 1024 * 1024
 NAME = re.compile(r"^[^/\\\x00-\x1f]{1,120}\.glb$", re.IGNORECASE)
 PAGE = (Path(__file__).with_name("hub_page.html")).read_text(encoding="utf-8")
 
@@ -72,7 +72,7 @@ def handler_for(folder: Path):
             except ValueError:
                 length = 0
             if not 20 <= length <= MAX_BYTES:
-                return self.send(413, b"El limite para Quest es 100 MiB. Reduce el GLB antes de subirlo.", "text/plain")
+                return self.send(413, b"El limite para Quest es 150 MiB. Reduce el GLB antes de subirlo.", "text/plain")
             data = self.rfile.read(length)
             if not valid_glb(data):
                 return self.send(400, b"Invalid GLB", "text/plain")

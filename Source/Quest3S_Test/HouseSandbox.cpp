@@ -60,7 +60,7 @@
 
 namespace
 {
-constexpr int64 MaxGlbBytes = 100 * 1024 * 1024;
+constexpr int64 MaxGlbBytes = 150 * 1024 * 1024;
 const FLinearColor CyberBackground(0.012f, 0.025f, 0.06f, 0.98f);
 const FLinearColor CyberAction(0.035f, 0.18f, 0.28f, 1.f);
 const FLinearColor CyberText(0.91f, 0.97f, 1.f, 1.f);
@@ -775,7 +775,7 @@ void AHouseSandboxGameMode::DownloadHouse(const FString& Url)
         const TArray<uint8>& Bytes = Response->GetContent();
         if (Bytes.Num() > MaxGlbBytes || !IsGlb(Bytes))
         {
-            WeakThis->SetError(TEXT("Archivo GLB invalido o mayor de 100 MB"));
+            WeakThis->SetError(TEXT("Archivo GLB invalido o mayor de 150 MiB"));
             return;
         }
         const FString Target = FPaths::Combine(WeakThis->GetModelDirectory(), Name);

@@ -46,9 +46,10 @@ def auditar(ruta: Path) -> bool:
     accesores = documento.get("accessors", [])
     materiales = documento.get("materials", [])
     imagenes = documento.get("images", [])
-    triangulos = 0
+    triangulos_malla: list[int] = []
     primitivas = 0
     for malla in documento.get("meshes", []):
+        triangulos_de_malla = 0
         for primitiva in malla.get("primitives", []):
             primitivas += 1
             if "KHR_draco_mesh_compression" in primitiva.get("extensions", {}):
@@ -60,9 +61,29 @@ def auditar(ruta: Path) -> bool:
             posicion = primitiva.get("attributes", {}).get("POSITION")
             numero = indice if indice is not None else posicion
             if isinstance(numero, int) and 0 <= numero < len(accesores):
-                triangulos += int(accesores[numero].get("count", 0)) // 3
+                triangulos_de_malla += int(accesores[numero].get("count", 0)) // 3
             else:
                 problemas.append("una primitiva carece de posiciones o índices válidos")
+        triangulos_malla.append(triangulos_de_malla)
+    nodos = documento.get("nodes", [])
+    escenas = documento.get("scenes", [])
+    indice_escena = documento.get("scene", 0)
+    if not isinstance(indice_escena, int) or not 0 <= indice_escena < len(escenas):
+        problemas.append("la escena activa no existe")
+        triangulos = 0
+    else:
+        triangulos = 0
+        pendientes = [(indice, 0) for indice in escenas[indice_escena].get("nodes", [])]
+        while pendientes:
+            indice, profundidad = pendientes.pop()
+            if not isinstance(indice, int) or not 0 <= indice < len(nodos) or profundidad > 128:
+                problemas.append("la escena contiene nodos inválidos o demasiado profundos")
+                continue
+            nodo = nodos[indice]
+            indice_malla = nodo.get("mesh")
+            if isinstance(indice_malla, int) and 0 <= indice_malla < len(triangulos_malla):
+                triangulos += triangulos_malla[indice_malla]
+            pendientes.extend((hijo, profundidad + 1) for hijo in nodo.get("children", []))
     if triangulos > LIMITE_TRIANGULOS:
         problemas.append("supera el límite de triángulos incluso antes de duplicar caras")
     elif triangulos * 2 > LIMITE_TRIANGULOS:
@@ -87,7 +108,7 @@ def auditar(ruta: Path) -> bool:
             avisos.append(f"la extensión {extension} todavía no se reproduce por completo")
 
     print(f"{ruta.name}: {tamano / 1048576:.1f} MiB, {primitivas} primitivas, "
-          f"{triangulos} triángulos de origen, {len(materiales)} materiales, {len(imagenes)} imágenes")
+          f"{triangulos} triángulos en la escena, {len(materiales)} materiales, {len(imagenes)} imágenes")
     for problema in sorted(set(problemas)):
         print(f"  ERROR: {problema}")
     for aviso in sorted(set(avisos)):
